@@ -26,11 +26,11 @@ Opening `index.html` straight from disk works for looking around, but the mic ne
 
 ## How it works
 
-- `js/pitch.js` — YIN pitch detection plus a debounced monophonic note tracker (no note flutter). Pure DSP, unit-tested in node.
-- `js/drums.js` — streaming onset detector (log-energy flux vs. adaptive median threshold) plus a 3-zone classifier: spectral centroid and band-energy ratios matched against per-pad templates with nearest-neighbor distance. Trainable.
-- `js/engine.js` — mic graph (`getUserMedia` → `AnalyserNode`), 80 fps analysis loop, Web MIDI output, internal Web Audio synth (mono lead + kick/snare/hat), session recorder.
-- `js/midifile.js` — session events to a Standard MIDI File. Tested byte-for-byte.
-- `js/ui.js`, `css/app.css`, `index.html` — onboarding wizard and studio.
+- `js/pitch.js`: YIN pitch detection plus a debounced monophonic note tracker (no note flutter), pure DSP unit-tested in node.
+- `js/drums.js`: streaming onset detector (log-energy flux vs. adaptive median threshold) plus a 3-zone classifier: spectral centroid and band-energy ratios matched against per-pad templates with nearest-neighbor distance. Trainable.
+- `js/engine.js`: mic graph (`getUserMedia` → `AnalyserNode`), 80 fps analysis loop, Web MIDI output, internal Web Audio synth (mono lead + kick/snare/hat), session recorder.
+- `js/midifile.js`: session events to a Standard MIDI File. Tested byte-for-byte.
+- `js/ui.js`, `css/app.css`, `index.html`: onboarding wizard and studio.
 
 ## Honest limits
 
@@ -42,7 +42,7 @@ Opening `index.html` straight from disk works for looking around, but the mic ne
 
 ## Tests
 
-`node tests/test-dsp.js` — 29 checks, all passing in this environment:
+`node tests/test-dsp.js`: 29 checks, all passing in this environment:
 
 - YIN on synthesized sines (110–1174 Hz, plus a harmonic whistle stack): exact MIDI note every time, cents accurate, noise and silence correctly rejected.
 - Note tracker: on/change/off sequencing, single-frame wobble does not retrigger.

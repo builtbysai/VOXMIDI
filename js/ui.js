@@ -449,7 +449,7 @@ export function boot() {
         const n = [...app.roll].reverse().find(n => n.midi === midi && n.end === null);
         if (n) { n.end = now; n.live = false; }
         if (app.lastNote === midi) { app.lastNote = null; lightKey(midi, false); }
-        $('#now-playing').textContent = 'Now: —';
+        $('#now-playing').textContent = 'Now: …';
       }
       if (app.roll.length > 400) app.roll.splice(0, app.roll.length - 400);
       if (app.engine.recorder.recording) {
@@ -536,7 +536,7 @@ export function boot() {
     app.engine.panic();
     app.roll.forEach(n => { if (n.end === null) n.end = performance.now() / 1000; n.live = false; });
     lightKey(-1, false);
-    $('#now-playing').textContent = 'Now: —';
+    $('#now-playing').textContent = 'Now: …';
   });
 
   /* record + download */
