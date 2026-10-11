@@ -157,40 +157,72 @@ export class NoteTracker {
     let midiInt = Math.round(midiFloat);
     if (quantize) midiInt = quantize(midiFloat);
 
+    // Hysteresis on note changes: the voice must travel 3/4 of a semitone
+    // toward a new note before it even becomes a candidate. This stops the
+    // classic warble where vibrato straddling a semitone boundary flips the
+    // played note back and forth at vibrato rate.
+    if (this.current && midiInt !== this.current.midi) {
+      const d = midiFloat - this.current.midi; // semitones, signed
+      const dir = Math.sign(midiInt - this.current.midi);
+      if ((dir > 0 && d < 0.75) || (dir < 0 && d > -0.75)) {
+        midiInt = this.current.midi;
+      }
+    }
+
     const velocity = Math.max(1, Math.min(127,
       Math.round(40 + 87 * Math.min(1, rms / 0.25))));
 
-    this.cb.onPitch && this.cb.onPitch(this.smoothFloat, (this.smoothFloat - midiInt) * 100);
-
     if (!this.current) {
-      if (!this.candidate || this.candidate.midi !== midiInt) {
-        this.candidate = { midi: midiInt, count: 1 };
-      } else {
-        this.candidate.count++;
+      // Onset: collect a short window of voiced frames and fire on the
+      // MEDIAN pitch — robust against attack transients and vibrato phase,
+      // which can make any single frame (or 3-frame mean) misleading.
+      if (!this.candidate || this.candidate.midi !== 'onset') {
+        this.candidate = { midi: 'onset', count: 0, floats: [] };
       }
-      if (this.candidate.count >= this.onsetFrames) {
-        this.current = { midi: midiInt, velocity };
+      this.candidate.count++;
+      this.candidate.floats.push(midiFloat);
+      if (this.candidate.count >= this.onsetFrames + 2) {
+        const sorted = [...this.candidate.floats].sort((a, b) => a - b);
+        const med = sorted[Math.floor(sorted.length / 2)];
+        let m = Math.round(med);
+        if (quantize) m = quantize(med);
+        this.current = { midi: m, velocity };
         this.candidate = null;
-        this.cb.onNoteOn && this.cb.onNoteOn(midiInt, velocity, (midiFloat - midiInt) * 100);
+        this.cb.onNoteOn && this.cb.onNoteOn(m, velocity, (med - m) * 100);
       }
-      return;
-    }
-
-    if (midiInt !== this.current.midi) {
+    } else if (midiInt !== this.current.midi) {
+      // A new pitch must not only be stable for changeFrames, its MEAN must
+      // sit close to the candidate note: this rejects vibrato straddling a
+      // semitone boundary (mean stays near the old note) while accepting
+      // genuine moves (mean follows the voice into the new note).
       if (!this.candidate || this.candidate.midi !== midiInt) {
-        this.candidate = { midi: midiInt, count: 1 };
+        this.candidate = { midi: midiInt, count: 1, sumFloat: midiFloat };
       } else {
         this.candidate.count++;
+        this.candidate.sumFloat += midiFloat;
       }
       if (this.candidate.count >= this.changeFrames) {
-        const old = this.current.midi;
-        this.current = { midi: midiInt, velocity };
-        this.candidate = null;
-        this.cb.onNoteOff && this.cb.onNoteOff(old);
-        this.cb.onNoteOn && this.cb.onNoteOn(midiInt, velocity, (midiFloat - midiInt) * 100);
+        const mean = this.candidate.sumFloat / this.candidate.count;
+        if (Math.abs(mean - this.candidate.midi) <= 0.3) {
+          const old = this.current.midi;
+          this.current = { midi: midiInt, velocity };
+          this.candidate = null;
+          this.cb.onNoteOff && this.cb.onNoteOff(old);
+          this.cb.onNoteOn && this.cb.onNoteOn(midiInt, velocity, (midiFloat - midiInt) * 100);
+        } else {
+          this.candidate = { midi: midiInt, count: 1, sumFloat: midiFloat };
+        }
       }
     } else {
       this.candidate = null;
     }
+
+    // Bend cents are measured against the note sounding AFTER this frame's
+    // note decisions (not the instant rounded value): near a semitone
+    // boundary the rounded note flips and raw (smoothFloat - midiInt)
+    // sawtooths +/-100c, which used to drive the synth detune into an
+    // audible warble. Against the decided note the bend stays continuous.
+    const bendRef = this.current ? this.current.midi : midiInt;
+    this.cb.onPitch && this.cb.onPitch(this.smoothFloat, (this.smoothFloat - bendRef) * 100);
   }
 }

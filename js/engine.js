@@ -64,22 +64,30 @@ export class InternalSynth {
     this.voice = null; // {oscA, oscB, noiseGain, breathGain, toneFilter, envGain}
     this.localOn = true;
     this._breath = 0;
+    this._sounding = false; // envelope state for legato note changes
+    this._bendSm = 0;       // smoothed detune (deadband + slew limited)
+    this._lastBendT = 0;
   }
 
   _ensureVoice() {
     if (this.voice) return this.voice;
     const ctx = this.ctx;
-    // Fundamental: sine. Warmth: triangle at -12 dB. No detune beating.
+    // Fundamental: sine. Warmth: triangle at -18 dB through its own dull
+    // lowpass — body without the odd-harmonic edge that read as "harsh".
     const oscA = ctx.createOscillator(); oscA.type = 'sine';
     const oscB = ctx.createOscillator(); oscB.type = 'triangle';
-    const oscBGain = ctx.createGain(); oscBGain.gain.value = 0.25;
-    // Breath: looped noise through a gentle bandpass = "air", not hiss.
+    const oscBGain = ctx.createGain(); oscBGain.gain.value = 0.13;
+    const triFilter = ctx.createBiquadFilter();
+    triFilter.type = 'lowpass'; triFilter.frequency.value = 1500; triFilter.Q.value = 0.5;
+    // Breath: looped noise through a soft bandpass = "air", not hiss.
+    // Centered at 2.1 kHz (below the sibilance band), low Q, gentle level.
     const noiseSrc = ctx.createBufferSource();
     noiseSrc.buffer = this._noiseBuffer(1.0); noiseSrc.loop = true;
     const noiseBP = ctx.createBiquadFilter();
-    noiseBP.type = 'bandpass'; noiseBP.frequency.value = 3200; noiseBP.Q.value = 0.9;
+    noiseBP.type = 'bandpass'; noiseBP.frequency.value = 2100; noiseBP.Q.value = 0.7;
     const noiseGain = ctx.createGain(); noiseGain.gain.value = 0;
     // Tone filter opens with harder playing; low Q so it never honks.
+    // Capped at 2.5 kHz: brilliance above that read as harshness, not air.
     const toneFilter = ctx.createBiquadFilter();
     toneFilter.type = 'lowpass'; toneFilter.frequency.value = 1400; toneFilter.Q.value = 0.7;
     // breathGain follows the player's blowing; envGain carries the ADSR.
@@ -87,7 +95,7 @@ export class InternalSynth {
     const envGain = ctx.createGain(); envGain.gain.value = 0;
 
     oscA.connect(toneFilter);
-    oscB.connect(oscBGain); oscBGain.connect(toneFilter);
+    oscB.connect(oscBGain); oscBGain.connect(triFilter); triFilter.connect(toneFilter);
     noiseSrc.connect(noiseBP); noiseBP.connect(noiseGain); noiseGain.connect(toneFilter);
     toneFilter.connect(breathGain); breathGain.connect(envGain);
     envGain.connect(this.master);
@@ -106,13 +114,21 @@ export class InternalSynth {
     v.oscB.frequency.setTargetAtTime(freq, t, 0.012);
     v.oscA.detune.setTargetAtTime(bendCents, t, 0.01);
     v.oscB.detune.setTargetAtTime(bendCents, t, 0.01);
+    this._bendSm = bendCents;
     // Tone opens with velocity; sustain level is perceptual, not linear.
     const vg = velocityGain(velocity);
-    v.toneFilter.frequency.setTargetAtTime(700 + vg * 2600, t, 0.03);
-    // Soft attack: ~25 ms to sustain. No more instant-on clicks.
+    v.toneFilter.frequency.setTargetAtTime(700 + vg * 1800, t, 0.03);
     const sustain = 0.32 * vg;
-    v.envGain.gain.cancelScheduledValues(t);
-    v.envGain.gain.setTargetAtTime(sustain, t, 0.008);
+    if (!this._sounding) {
+      // Fresh onset: soft attack (~25 ms to sustain). No instant-on clicks.
+      v.envGain.gain.cancelScheduledValues(t);
+      v.envGain.gain.setTargetAtTime(sustain, t, 0.008);
+    } else {
+      // Legato note change: keep the envelope where it is, just steer the
+      // level. Re-attacking on every tracker note change chopped phrases.
+      v.envGain.gain.setTargetAtTime(sustain, t, 0.05);
+    }
+    this._sounding = true;
     this._applyBreath(t);
   }
 
@@ -127,20 +143,31 @@ export class InternalSynth {
 
   _applyBreath(t) {
     const b = breathCurve(this._breath);
-    // Voice never fully chokes; air sits ~18 dB under the tone.
+    // Voice never fully chokes; air sits ~20 dB under the tone.
     this.voice.breathGain.gain.setTargetAtTime(0.15 + 0.85 * b, t, 0.04);
-    this.voice.noiseGain.gain.setTargetAtTime(0.05 * b, t, 0.05);
+    this.voice.noiseGain.gain.setTargetAtTime(0.035 * b, t, 0.05);
   }
 
   pitchBend(cents) {
     if (!this.localOn || !this.voice) return;
     const t = this.ctx.currentTime;
-    this.voice.oscA.detune.setTargetAtTime(cents, t, 0.01);
-    this.voice.oscB.detune.setTargetAtTime(cents, t, 0.01);
+    // Deadband: sub-perceptual wobble (<4c) goes to zero instead of
+    // riding the detune at 80 Hz — that constant micro-motion read as harsh.
+    const target = Math.abs(cents) < 4 ? 0 : cents;
+    // Slew limit: 1500 cents/sec keeps real vibrato (peaks ~900 c/s)
+    // but turns frame-to-frame detector steps into smooth motion.
+    const dt = Math.max(1 / 240, t - (this._lastBendT || t));
+    this._lastBendT = t;
+    const maxStep = 1500 * dt;
+    const dv = target - (this._bendSm || 0);
+    this._bendSm = (this._bendSm || 0) + Math.max(-maxStep, Math.min(maxStep, dv));
+    this.voice.oscA.detune.setTargetAtTime(this._bendSm, t, 0.02);
+    this.voice.oscB.detune.setTargetAtTime(this._bendSm, t, 0.02);
   }
 
   noteOff() {
     if (!this.voice) return;
+    this._sounding = false;
     const t = this.ctx.currentTime;
     // Gentle release: ~120 ms to silence. Notes end, they don't get cut.
     this.voice.envGain.gain.cancelScheduledValues(t);

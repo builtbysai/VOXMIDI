@@ -4,7 +4,7 @@
 import {
   yinDetect, freqToMidiFloat, midiToName, frameRMS, NoteTracker,
 } from '../js/pitch.js';
-import { velocityGain, breathCurve } from '../js/engine.js';
+import { velocityGain, breathCurve, InternalSynth } from '../js/engine.js';
 import { fftMagnitudes, spectralCentroid, classifyHit, OnsetDetector } from '../js/drums.js';
 import { eventsToSMF, inspectSMF } from '../js/midifile.js';
 
@@ -99,6 +99,99 @@ console.log('NoteTracker state machine');
   for (let i = 0; i < 10; i++) tick(det(i % 2 ? 466.16 : 440), 0.2);
   const ons = evts.filter(e => e[0] === 'on');
   check('single-frame wobble does not retrigger', ons.length === 1, `ons=${ons.length}`);
+}
+
+console.log('NoteTracker bend continuity (no boundary warble)');
+{
+  const SR = 48000, N = 2048, HOP = 1024;
+  const centsSeq = []; const evts = []; let firstOnAt = -1;
+  const tr = new NoteTracker({
+    onNoteOn: (m) => { if (firstOnAt < 0) firstOnAt = centsSeq.length; evts.push(['on', m]); },
+    onNoteOff: (m) => evts.push(['off', m]),
+    onPitch: (fl, c) => centsSeq.push(c),
+  }, { gate: 0.01 });
+  // Continuous 3-second signal: voice hovers at MIDI 57.48 (just under the
+  // A3/A#3 boundary) with +/-30c vibrato at 5.5 Hz. Adversarial for warble.
+  // NOTE: vibrato is synthesized by integrating instantaneous frequency;
+  // the closed form sin(2*pi*f(t)*t) is wrong for time-varying f.
+  // Vibrato depth ramps in over 300ms like a real voice (it is not present
+  // at full depth during the attack).
+  const dur = 3.0, total = Math.floor(SR * dur);
+  const sig = new Float32Array(total);
+  const f0base = 440 * Math.pow(2, (57.48 - 69) / 12);
+  const hs = [1, 0.55, 0.3, 0.16];
+  const phases = [0, 0, 0, 0];
+  for (let i = 0; i < total; i++) {
+    const t = i / SR, vibCents = 30 * Math.min(1, t / 0.3) * Math.sin(2 * Math.PI * 5.5 * t);
+    let s = 0;
+    for (let h = 1; h <= 4; h++) {
+      phases[h - 1] += 2 * Math.PI * f0base * h * Math.pow(2, vibCents / 1200) / SR;
+      s += hs[h - 1] * Math.sin(phases[h - 1]);
+    }
+    sig[i] = s * 0.3;
+  }
+  for (let k = 0; k + N <= total; k += HOP) {
+    const fr = sig.slice(k, k + N);
+    tr.process(yinDetect(fr, SR), frameRMS(fr));
+  }
+  const ons = evts.filter(e => e[0] === 'on').length;
+  // Continuity matters once a note is sounding: pre-onset bend jumps are
+  // inaudible (InternalSynth.pitchBend no-ops without a voice) and only
+  // feed the tuner needle.
+  const sounded = firstOnAt >= 0 ? centsSeq.slice(firstOnAt) : centsSeq;
+  let maxJump = 0;
+  for (let i = 1; i < sounded.length; i++) maxJump = Math.max(maxJump, Math.abs(sounded[i] - sounded[i - 1]));
+  check('vibrato at boundary: single noteOn, no flap', ons === 1, `ons=${ons}`);
+  check('bend signal continuous (max jump < 30c)', maxJump < 30, `maxJump=${maxJump.toFixed(1)}c`);
+  check('bend follows vibrato musically', Math.min(...centsSeq) < 0 && Math.max(...centsSeq) > 15,
+    `range ${Math.min(...centsSeq).toFixed(0)}..${Math.max(...centsSeq).toFixed(0)}c`);
+}
+
+console.log('InternalSynth pitchBend smoothing (mock AudioContext)');
+{
+  // Minimal Web Audio mock: records param automation.
+  const mkParam = () => {
+    const p = { value: 0, calls: [], cancels: 0 };
+    p.setTargetAtTime = (v, t, tau) => { p.calls.push([v, t, tau]); p.value = v; };
+    p.setValueAtTime = (v) => { p.value = v; };
+    p.cancelScheduledValues = () => { p.cancels++; };
+    return p;
+  };
+  const mkNode = () => ({ connect() {}, start() {}, stop() {} });
+  let now = 100;
+  const mockCtx = {
+    get currentTime() { return now; },
+    get sampleRate() { return 48000; },
+    createOscillator: () => Object.assign(mkNode(), { type: '', frequency: mkParam(), detune: mkParam() }),
+    createGain: () => Object.assign(mkNode(), { gain: mkParam() }),
+    createBiquadFilter: () => Object.assign(mkNode(), { type: '', frequency: mkParam(), Q: mkParam() }),
+    createBufferSource: () => Object.assign(mkNode(), { buffer: null, loop: false }),
+    createBuffer: (ch, len) => ({ getChannelData: () => new Float32Array(len) }),
+  };
+  const master = mockCtx.createGain();
+  const synth = new InternalSynth(mockCtx, master);
+  synth.noteOn(69, 90, 0);
+  const det = () => synth.voice.oscA.detune.value;
+  // Deadband: 2c of wobble must not move the detune.
+  now += 1 / 80; synth.pitchBend(2);
+  check('deadband swallows +/-4c wobble', det() === 0, `detune=${det()}`);
+  // Slew limit: a 100c step in one 12.5ms frame may move at most ~19c.
+  now += 1 / 80; synth.pitchBend(100);
+  const d1 = det();
+  check('slew limiter caps per-frame travel', d1 > 0 && d1 <= 20, `detune=${d1.toFixed(1)}`);
+  // Given time, it converges to the target.
+  for (let i = 0; i < 40; i++) { now += 1 / 80; synth.pitchBend(100); }
+  check('bend converges to target', Math.abs(det() - 100) < 1, `detune=${det().toFixed(1)}`);
+  // Legato: second noteOn while sounding must not cancel/re-attack the envelope.
+  const cancelsBefore = synth.voice.envGain.gain.cancels;
+  synth.noteOn(72, 90, 0);
+  check('legato note change keeps envelope (no re-attack)',
+    synth.voice.envGain.gain.cancels === cancelsBefore, 'envelope was cancelled');
+  // Fresh note after noteOff re-attacks.
+  synth.noteOff();
+  synth.noteOn(72, 90, 0);
+  check('fresh onset after silence re-attacks',
+    synth.voice.envGain.gain.cancels > cancelsBefore, 'envelope was not reset');
 }
 
 console.log('Drum classifier');
