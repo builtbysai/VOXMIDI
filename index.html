@@ -2,1893 +2,220 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='%231e3a2f' stroke='%233a7d5d' stroke-width='2'/><text x='16' y='21' font-size='14' text-anchor='middle' fill='%23c8f0d8'>V</text></svg>">
-<title>VoxMIDI: voice to MIDI controller</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, -apple-system, sans-serif; background: #0d0f14; color: #e8eaf0;
-         min-height: 100vh; padding: 16px; }
-  header { text-align: center; margin-bottom: 12px; }
-  header h1 { font-size: 22px; letter-spacing: 2px; }
-  header p { color: #8a90a0; font-size: 13px; margin-top: 4px; }
-  .tabs { display: flex; gap: 6px; justify-content: center; margin-bottom: 14px; flex-wrap: wrap; }
-  .tab { padding: 8px 18px; border-radius: 8px; border: 1px solid #2a2e3a; background: #14161d;
-         color: #aab; cursor: pointer; font-size: 14px; }
-  .tab.active { background: #1e3a2f; border-color: #3a7d5d; color: #c8f0d8; }
-  .page { display: none; max-width: 900px; margin: 0 auto; }
-  .page.active { display: block; }
-  .card { background: #14161d; border: 1px solid #23262f; border-radius: 12px; padding: 16px; margin-bottom: 12px; }
-  .card h3 { font-size: 14px; color: #9aa; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px; }
-  .row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
-  label { font-size: 13px; color: #9aa; }
-  select, input[type=range] { background: #0a0c10; color: #e8eaf0; border: 1px solid #2a2e3a;
-                              border-radius: 6px; padding: 6px 10px; font-size: 14px; }
-  button { background: #1e3a2f; color: #c8f0d8; border: 1px solid #3a7d5d; border-radius: 8px;
-           padding: 10px 20px; font-size: 15px; cursor: pointer; }
-  button:disabled { opacity: 0.4; cursor: default; }
-  button.danger { background: #3a1e1e; border-color: #7d3a3a; color: #f0c8c8; }
-  #noteWheel { display: block; margin: 0 auto; cursor: pointer; }
-  .meters { display: flex; gap: 12px; justify-content: center; margin-top: 10px; }
-  .meter { text-align: center; }
-  .meter canvas { display: block; }
-  .meter span { font-size: 12px; color: #9aa; }
-  .pads { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-  .pad { aspect-ratio: 1; border-radius: 12px; border: 2px solid #2a2e3a; background: #14161d;
-         display: flex; flex-direction: column; align-items: center; justify-content: center;
-         cursor: pointer; font-size: 13px; color: #9aa; }
-  .pad.trained { border-color: #3a7d5d; color: #c8f0d8; }
-  .pad.hit { background: #1e3a2f; transform: scale(0.96); }
-  .pad .pname { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
-  #status { text-align: center; color: #8a90a0; font-size: 13px; margin-top: 10px; min-height: 20px; }
-  .midi-note { display: inline-block; padding: 2px 8px; background: #1e3a2f; border-radius: 4px;
-               margin: 2px; font-size: 13px; }
-</style>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>VOXMIDI — your voice is the instrument</title>
+<meta name="description" content="Hum, sing, or whistle into your mic and play any synth in real time. Beatbox the drums. Send MIDI to your DAW.">
+<link rel="stylesheet" href="css/app.css">
 </head>
 <body>
-<header>
-  <h1>VOXMIDI</h1>
-  <p>your voice is the MIDI controller · v0.6</p>
-</header>
 
-<div class="tabs">
-  <div class="tab active" data-page="play">Play</div>
-  <div class="tab" data-page="train">Train</div>
-  <div class="tab" data-page="key">Key</div>
-  <div class="tab" data-page="assign">Assign</div>
-  <div class="tab" data-page="midi">MIDI</div>
-</div>
+<!-- ==================== ONBOARDING ==================== -->
+<section id="onboarding" aria-label="Setup">
+  <div class="ob-card">
+    <div class="wordmark">VOXMIDI</div>
+    <div class="ob-dots" aria-hidden="true">
+      <span class="ob-dot"></span><span class="ob-dot"></span><span class="ob-dot"></span><span class="ob-dot"></span>
+    </div>
 
-<div class="page active" id="page-play">
-  <div class="card">
-    <h3>Input</h3>
-    <div class="row">
-      <button id="startBtn">Start microphone</button>
-      <button id="calBtn" disabled>Calibrate room</button>
-      <label>Level <span id="levelVal">—</span></label>
-      <button id="capBtn" disabled>● Capture MIDI</button>
+    <div class="ob-step" id="ob-welcome">
+      <h1>Your voice is the instrument.</h1>
+      <p class="ob-sub">Hum a melody, hear it played back as a synth. Beatbox, get drums. Send the MIDI straight to your DAW. No installs, no accounts.</p>
+      <ul class="ob-feats">
+        <li><b>Hum, sing, or whistle</b> to play notes in real time</li>
+        <li><b>Beatbox</b> to trigger kick, snare, and hat</li>
+        <li><b>Record</b> your session and download it as a MIDI file</li>
+      </ul>
+      <button class="btn" id="btn-begin">Set up your mic</button>
+      <div class="ob-nav"><button class="linklike" data-skip>Skip setup, I know what I am doing</button></div>
     </div>
-    <div class="row">
-      <label>Stickiness <input type="range" id="stick" min="0" max="100" value="35"></label>
-      <label><input type="checkbox" id="useSynth" checked> internal synth</label>
+
+    <div class="ob-step" id="ob-mic" hidden>
+      <h2>First, your microphone</h2>
+      <p class="ob-sub">Your browser is about to ask for microphone access. Say yes. VOXMIDI listens on this device only: nothing is recorded or uploaded unless you press Record, and even then the file stays with you.</p>
+      <button class="btn" id="btn-mic">Enable microphone</button>
+      <p id="mic-error" hidden></p>
+      <label id="mic-select-label" hidden for="mic-select">Input device</label>
+      <select id="mic-select" hidden></select>
+      <p id="mic-hint" class="privacy-note"></p>
+      <div class="ob-nav">
+        <button id="ob-back">Back</button>
+        <button class="btn ghost" id="btn-to-level" disabled>Continue</button>
+        <button class="linklike" data-skip>Skip</button>
+      </div>
     </div>
-    <div id="status">click Start, allow the mic, then sing or beatbox</div>
+
+    <div class="ob-step" id="ob-level" hidden>
+      <h2>Check your level</h2>
+      <p class="ob-sub">Make some noise. The bar should dance in the green. If it barely moves, raise the input gain on the studio screen later.</p>
+      <div class="meter-label">Input level</div>
+      <div class="meter"><div id="ob-meter-fill"></div></div>
+      <p id="level-state">Make some noise…</p>
+      <div class="ob-nav">
+        <button id="ob-back2" class="linklike" onclick="document.querySelector('#ob-back').click()">Back</button>
+        <button class="btn ghost" id="btn-to-hum">Continue</button>
+        <button class="linklike" data-skip>Skip</button>
+      </div>
+    </div>
+
+    <div class="ob-step" id="ob-hum" hidden>
+      <h2>Hum one steady note</h2>
+      <p class="ob-sub">Hold any note for a second. When VOXMIDI locks on, you will see it here.</p>
+      <div class="hum-note" id="hum-note">–</div>
+      <p id="hum-status">Listening…</p>
+      <div class="ob-nav">
+        <button class="btn" id="btn-start" disabled>Waiting for a note…</button>
+        <button class="linklike" data-skip>Skip, take me in</button>
+      </div>
+      <p class="privacy-note">Tip: whistling tracks the most cleanly. Humming works too.</p>
+    </div>
   </div>
-  <div class="card">
-    <h3>Pitch → MIDI</h3>
-    <canvas id="noteWheel" width="300" height="300"></canvas>
-    <div class="row" style="justify-content:center; margin-top:8px;">
-      <label><input type="checkbox" id="chordsOn"> chords</label>
-      <label>Chord set
-        <select id="chordSet">
-          <option value="triad">Triads</option>
-          <option value="pop">Pop</option>
-          <option value="power">Power</option>
+</section>
+
+<!-- ==================== STUDIO ==================== -->
+<section id="studio" hidden aria-label="VOXMIDI studio">
+  <header class="topbar">
+    <div class="wordmark">VOXMIDI</div>
+    <span id="status-dot" class="dot idle" title="Engine status"></span>
+    <span id="now-playing">Now: —</span>
+    <span class="spacer"></span>
+    <button class="btn small rec" id="btn-record"><span class="rec-dot"></span><span class="rec-label">Record</span></button>
+    <button class="icon-btn" id="btn-help" title="How it works">?</button>
+  </header>
+
+  <div class="stage">
+    <div class="ribbon-wrap">
+      <canvas id="ribbon"></canvas>
+      <div class="ribbon-tag">PITCH</div>
+    </div>
+    <div class="note-card">
+      <div class="note-big"><span id="note-letter">–</span><span id="note-octave"></span></div>
+      <div id="note-name-full">LISTENING</div>
+      <div class="cents-bar"><div class="mid"></div><div id="cents-needle"></div></div>
+      <div id="cents-val">+0 ct</div>
+    </div>
+  </div>
+
+  <div class="keyboard-wrap"><div id="keyboard" aria-hidden="true"></div></div>
+
+  <div class="panels" style="margin-top:16px">
+    <div class="panel">
+      <h3>PITCH</h3>
+      <div class="row2">
+        <div class="field">
+          <label for="key-select">Key</label>
+          <select id="key-select"></select>
+        </div>
+        <div class="field">
+          <label for="scale-select">Scale</label>
+          <select id="scale-select"></select>
+        </div>
+      </div>
+      <div class="toggle-row"><span>Stay in key</span><input type="checkbox" id="tgl-quantize"></div>
+      <div class="field">
+        <label for="bend-select">Pitch bend</label>
+        <select id="bend-select">
+          <option value="follow">Follow my voice</option>
+          <option value="off">Off (snap to notes)</option>
         </select>
-      </label>
-      <label>Mode
-        <select id="bendMode">
-          <option value="intelli">IntelliBend (anchored)</option>
-          <option value="true">TruBend (follow voice)</option>
-          <option value="off">Bend off</option>
-        </select>
-      </label>
-      <label>Bend range <select id="bendRange">
-        <option>1</option><option selected>2</option><option>4</option><option>12</option>
-      </select> st</label>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="octave-select">Octave shift</label>
+          <select id="octave-select">
+            <option value="-2">-2</option><option value="-1">-1</option>
+            <option value="0" selected>0</option><option value="1">+1</option><option value="2">+2</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="gain-range">Sensitivity <span id="gain-val"></span></label>
+          <div class="meter small"><div id="meter-fill"></div></div>
+          <input type="range" id="gain-range" min="5" max="80" step="1" style="margin-top:8px">
+        </div>
+      </div>
+      <div class="toggle-row"><span>Loud means harder hits</span><input type="checkbox" id="tgl-velocity"></div>
     </div>
-    <div id="midiLog" style="text-align:center; margin-top:8px;"></div>
-  </div>
-  <div class="card">
-    <h3>Vowel → CC</h3>
-    <div class="meters">
-      <div class="meter"><canvas id="mAaa" width="64" height="64"></canvas><span>aaa → <span id="ccAaa">74</span></span></div>
-      <div class="meter"><canvas id="mOoo" width="64" height="64"></canvas><span>ooo → <span id="ccOoo">71</span></span></div>
-      <div class="meter"><canvas id="mEee" width="64" height="64"></canvas><span>eee → <span id="ccEee">76</span></span></div>
-      <div class="meter"><canvas id="mEnv" width="64" height="64"></canvas><span>env → <span id="ccEnv">11</span></span></div>
-    </div>
-  </div>
-  <div class="card">
-    <h3>Trigger pads</h3>
-    <div class="pads" id="pads"></div>
-  </div>
-</div>
 
-<div class="page" id="page-train">
-  <div class="card">
-    <h3>Train a trigger sound</h3>
-    <div class="row">
-      <label>Pad <select id="trainPad"></select></label>
-      <label>Name <input type="text" id="padName" value="kick" style="width:90px"></label>
-      <label>MIDI note <input type="number" id="padMidi" value="36" min="0" max="127" style="width:64px"></label>
+    <div class="panel">
+      <h3>DRUMS</h3>
+      <div class="toggle-row"><span>Beatbox triggers</span><input type="checkbox" id="tgl-drums"></div>
+      <div id="drum-strip">
+        <button class="pad" id="pad-kick">Kick</button>
+        <button class="pad" id="pad-snare">Snare</button>
+        <button class="pad" id="pad-hat">Hat</button>
+      </div>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn ghost small" id="btn-train">Train pads to my voice</button>
+      </div>
+      <p style="font-size:13px;margin:10px 0 0">Make a kick, snare, or hat sound with your mouth. VOXMIDI sorts them by brightness.</p>
     </div>
-    <div class="row">
-      <button id="trainBtn" disabled>Record 5 takes</button>
-      <span id="trainStatus" style="font-size:13px; color:#9aa;"></span>
-    </div>
-    <p style="font-size:13px; color:#8a90a0;">Make your sound 5 times into the mic, about half a second apart. Keep each trigger sound as distinct as possible.</p>
-  </div>
-</div>
 
-<div class="page" id="page-key">
-  <div class="card">
-    <h3>Scale &amp; key</h3>
-    <div class="row">
-      <label>Scale <select id="scaleSel">
-        <option>Chromatic</option><option>Major</option><option>Minor</option>
-        <option>Pentatonic</option><option>Blues</option><option>Dorian</option>
-        <option>Phrygian</option><option>Lydian</option><option>Mixolydian</option>
-        <option>Locrian</option><option>HarmonicMinor</option><option>MelodicMinor</option>
-        <option>WholeTone</option><option>Diminished</option>
-      </select></label>
-      <label>Root <select id="rootSel"></select></label>
-      <button id="detectKeyBtn">Detect from singing</button>
-      <button id="previewScaleBtn">Play scale</button>
+    <div class="panel">
+      <h3>OUTPUT</h3>
+      <div class="field">
+        <label for="mic-select-studio">Microphone</label>
+        <select id="mic-select-studio" hidden></select>
+        <p id="mic-studio-status" style="font-size:13px;margin:8px 0">Microphone is off.</p>
+        <button class="btn ghost small" id="btn-mic-studio">Enable microphone</button>
+      </div>
+      <div class="field" id="midi-select-wrap">
+        <label for="midi-select">MIDI output</label>
+        <select id="midi-select"><option value="">Built-in synth only</option></select>
+      </div>
+      <p id="midi-status"></p>
+      <div class="toggle-row"><span>Local synth sound</span><input type="checkbox" id="tgl-local"></div>
+      <div class="btn-row" style="margin-top:8px">
+        <button class="btn ghost small" id="btn-panic">Panic (stop all sound)</button>
+      </div>
     </div>
-    <div id="keyResult" style="font-size:13px; color:#9aa;"></div>
   </div>
-</div>
 
-<div class="page" id="page-assign">
-  <div class="card">
-    <h3>Vowel / envelope → CC mapping</h3>
-    <div class="row"><label>aaa → CC <input type="number" id="ccAaaIn" value="74" min="0" max="127" style="width:64px"></label>
-      <label>min <input type="range" id="thAaa" min="0" max="100" value="10"></label></div>
-    <div class="row"><label>ooo → CC <input type="number" id="ccOooIn" value="71" min="0" max="127" style="width:64px"></label>
-      <label>min <input type="range" id="thOoo" min="0" max="100" value="10"></label></div>
-    <div class="row"><label>eee → CC <input type="number" id="ccEeeIn" value="76" min="0" max="127" style="width:64px"></label>
-      <label>min <input type="range" id="thEee" min="0" max="100" value="10"></label></div>
-    <div class="row"><label>env → CC <input type="number" id="ccEnvIn" value="11" min="0" max="127" style="width:64px"></label>
-      <label>min <input type="range" id="thEnv" min="0" max="100" value="5"></label></div>
-    <p style="font-size:13px; color:#8a90a0;">Thresholds gate each tracker to your voice. Click a meter on the Play tab to bypass it.</p>
+  <div class="session">
+    <div class="session-head">
+      <h3>SESSION</h3>
+      <span id="rec-count">0 notes</span>
+      <span class="spacer"></span>
+      <button class="btn ghost small" id="btn-midi-dl" disabled>Download MIDI</button>
+      <button class="btn ghost small" id="btn-clear-roll">Clear</button>
+    </div>
+    <div class="roll-wrap"><canvas id="roll"></canvas></div>
   </div>
-  <div class="card">
-    <h3>Profiles</h3>
-    <div class="row">
-      <button id="saveProf">Save profile</button>
-      <button id="loadProf">Load profile</button>
-      <span id="profStatus" style="font-size:13px; color:#9aa;"></span>
+
+  <footer class="foot">
+    VOXMIDI runs entirely in your browser. Audio never leaves your device.<br>
+    <a href="https://github.com/builtbysai/VOXMIDI">github.com/builtbysai/VOXMIDI</a>
+  </footer>
+</section>
+
+<!-- ==================== MODALS ==================== -->
+<div class="modal" id="train-modal" hidden>
+  <div class="modal-card">
+    <h2>Train the drum pads</h2>
+    <p>Everyone beatboxes differently. Tap Train, then make that sound three times. VOXMIDI learns your version.</p>
+    <div id="train-rows"></div>
+    <p id="train-hint"></p>
+    <div class="btn-row">
+      <button class="btn ghost small" id="train-reset">Reset to defaults</button>
+      <button class="btn small" id="train-close">Done</button>
     </div>
   </div>
 </div>
 
-<div class="page" id="page-midi">
-  <div class="card">
-    <h3>MIDI output</h3>
-    <div class="row">
-      <label>Output <select id="midiOut"><option value="">(no MIDI; internal synth only)</option></select></label>
-      <button id="midiBtn">Enable MIDI</button>
-    </div>
-    <div class="row">
-      <label>Channel <select id="midiCh"></select></label>
-    </div>
-    <p style="font-size:13px; color:#8a90a0;">Chrome desktop only. Route to your DAW with a virtual MIDI port (IAC bus on Mac, loopMIDI on Windows), then select it above.</p>
-    <div id="midiStatus" style="font-size:13px; color:#9aa;"></div>
+<div class="modal" id="help-modal" hidden>
+  <div class="modal-card">
+    <h2>How VOXMIDI works</h2>
+    <ul class="help-list">
+      <li><b>Sing, hum, or whistle</b> into your mic. VOXMIDI tracks the pitch 80 times a second and plays it as MIDI notes.</li>
+      <li><b>Stay in key</b> snaps your notes to the scale you pick, so even rough humming lands on real notes.</li>
+      <li><b>Pitch bend: Follow my voice</b> glides between notes like your voice does. Off snaps cleanly to each note.</li>
+      <li><b>Beatbox</b> a kick, snare, or hat. If it misfires, train the pads to your mouth sounds.</li>
+      <li><b>MIDI output:</b> pick a device to drive a DAW or hardware synth (Chrome, Edge, or Firefox). Otherwise the built-in synth plays.</li>
+      <li><b>Record</b> captures everything, then <b>Download MIDI</b> gives you a standard .mid file for your DAW.</li>
+      <li><b>Panic</b> kills all sound instantly if a note sticks.</li>
+    </ul>
+    <div class="btn-row"><button class="btn small" id="help-close">Back to the music</button></div>
   </div>
 </div>
 
-<script>
-"use strict";
-// pitchy vendored into worklet
-// fft vendored into worklet
-const WORKLET_SRC = `
-
-/**
- * @typedef {Float32Array | Float64Array | number[]} Buffer One of the supported
- * buffer types. Other numeric array types may not work correctly.
- */
-
-/**
- * A class that can perform autocorrelation on input arrays of a given size.
- *
- * The class holds internal buffers so that no additional allocations are
- * necessary while performing the operation.
- *
- * @template {Buffer} T the buffer type to use. While inputs to the
- * autocorrelation process can be any array-like type, the output buffer
- * (whether provided explicitly or using a fresh buffer) is always of this type.
- */
-class Autocorrelator {
-  /** @private @readonly @type {number} */
-  _inputLength;
-  /** @private @type {FFT} */
-  _fft;
-  /** @private @type {(size: number) => T} */
-  _bufferSupplier;
-  /** @private @type {T} */
-  _paddedInputBuffer;
-  /** @private @type {T} */
-  _transformBuffer;
-  /** @private @type {T} */
-  _inverseBuffer;
-
-  /**
-   * A helper method to create an {@link Autocorrelator} using
-   * {@link Float32Array} buffers.
-   *
-   * @param inputLength {number} the input array length to support
-   * @returns {Autocorrelator<Float32Array>}
-   */
-  static forFloat32Array(inputLength) {
-    return new Autocorrelator(
-      inputLength,
-      (length) => new Float32Array(length),
-    );
-  }
-
-  /**
-   * A helper method to create an {@link Autocorrelator} using
-   * {@link Float64Array} buffers.
-   *
-   * @param inputLength {number} the input array length to support
-   * @returns {Autocorrelator<Float64Array>}
-   */
-  static forFloat64Array(inputLength) {
-    return new Autocorrelator(
-      inputLength,
-      (length) => new Float64Array(length),
-    );
-  }
-
-  /**
-   * A helper method to create an {@link Autocorrelator} using \`number[]\`
-   * buffers.
-   *
-   * @param inputLength {number} the input array length to support
-   * @returns {Autocorrelator<number[]>}
-   */
-  static forNumberArray(inputLength) {
-    return new Autocorrelator(inputLength, (length) => Array(length));
-  }
-
-  /**
-   * Constructs a new {@link Autocorrelator} able to handle input arrays of the
-   * given length.
-   *
-   * @param inputLength {number} the input array length to support. This
-   * \`Autocorrelator\` will only support operation on arrays of this length.
-   * @param bufferSupplier {(length: number) => T} the function to use for
-   * creating buffers, accepting the length of the buffer to create and
-   * returning a new buffer of that length. The values of the returned buffer
-   * need not be initialized in any particular way.
-   */
-  constructor(inputLength, bufferSupplier) {
-    if (inputLength < 1) {
-      throw new Error(\`Input length must be at least one\`);
-    }
-    this._inputLength = inputLength;
-    // We need to double the input length to get correct results, and the FFT
-    // algorithm we use requires a length that's a power of 2
-    this._fft = new FFT(ceilPow2(2 * inputLength));
-    this._bufferSupplier = bufferSupplier;
-    this._paddedInputBuffer = this._bufferSupplier(this._fft.size);
-    this._transformBuffer = this._bufferSupplier(2 * this._fft.size);
-    this._inverseBuffer = this._bufferSupplier(2 * this._fft.size);
-  }
-
-  /**
-   * Returns the supported input length.
-   *
-   * @returns {number} the supported input length
-   */
-  get inputLength() {
-    return this._inputLength;
-  }
-
-  /**
-   * Autocorrelates the given input data.
-   *
-   * @param input {ArrayLike<number>} the input data to autocorrelate
-   * @param output {T} the output buffer into which to write the autocorrelated
-   * data. If not provided, a new buffer will be created.
-   * @returns {T} \`output\`
-   */
-  autocorrelate(input, output = this._bufferSupplier(input.length)) {
-    if (input.length !== this._inputLength) {
-      throw new Error(
-        \`Input must have length \${this._inputLength} but had length \${input.length}\`,
-      );
-    }
-    // Step 0: pad the input array with zeros
-    for (let i = 0; i < input.length; i++) {
-      this._paddedInputBuffer[i] = input[i];
-    }
-    for (let i = input.length; i < this._paddedInputBuffer.length; i++) {
-      this._paddedInputBuffer[i] = 0;
-    }
-
-    // Step 1: get the DFT of the input array
-    this._fft.realTransform(this._transformBuffer, this._paddedInputBuffer);
-    // We need to fill in the right half of the array too
-    this._fft.completeSpectrum(this._transformBuffer);
-    // Step 2: multiply each entry by its conjugate
-    const tb = this._transformBuffer;
-    for (let i = 0; i < tb.length; i += 2) {
-      tb[i] = tb[i] * tb[i] + tb[i + 1] * tb[i + 1];
-      tb[i + 1] = 0;
-    }
-    // Step 3: perform the inverse transform
-    this._fft.inverseTransform(this._inverseBuffer, this._transformBuffer);
-
-    // This last result (the inverse transform) contains the autocorrelation
-    // data, which is completely real
-    for (let i = 0; i < input.length; i++) {
-      output[i] = this._inverseBuffer[2 * i];
-    }
-    return output;
-  }
-}
-
-/**
- * Returns an array of all the key maximum positions in the given input array.
- *
- * In McLeod's paper, a key maximum is the highest maximum between a positively
- * sloped zero crossing and a negatively sloped one.
- *
- * TODO: it may be more efficient not to construct a new output array each time,
- * but that would also make the code more complicated (more so than the changes
- * that were needed to remove the other allocations).
- *
- * @param input {ArrayLike<number>}
- * @returns {number[]}
- */
-function getKeyMaximumIndices(input) {
-  // The indices of the key maxima
-  /** @type {number[]} */ const keyIndices = [];
-  // Whether the last zero crossing found was positively sloped; equivalently,
-  // whether we're looking for a key maximum
-  let lookingForMaximum = false;
-  // The largest local maximum found so far
-  let max = -Infinity;
-  // The index of the largest local maximum so far
-  let maxIndex = -1;
-
-  for (let i = 1; i < input.length - 1; i++) {
-    if (input[i - 1] <= 0 && input[i] > 0) {
-      // Positively sloped zero crossing
-      lookingForMaximum = true;
-      maxIndex = i;
-      max = input[i];
-    } else if (input[i - 1] > 0 && input[i] <= 0) {
-      // Negatively sloped zero crossing
-      lookingForMaximum = false;
-      if (maxIndex !== -1) {
-        keyIndices.push(maxIndex);
-      }
-    } else if (lookingForMaximum && input[i] > max) {
-      max = input[i];
-      maxIndex = i;
-    }
-  }
-
-  return keyIndices;
-}
-
-/**
- * Refines the chosen key maximum index chosen from the given data by
- * interpolating a parabola using the key maximum index and its two neighbors
- * and finding the position of that parabola's maximum value.
- *
- * This is described in section 5 of the MPM paper as a way to refine the
- * position of the maximum.
- *
- * @param index {number} the chosen key maximum index. This must be between \`1\`
- * and \`data.length - 2\`, inclusive, since it and its two neighbors need to be
- * valid indexes of \`data\`.
- * @param data {ArrayLike<number>} the input array from which \`index\` was chosen
- * @returns {[number, number]} a pair consisting of the refined key maximum index and the
- * interpolated value of \`data\` at that index (the latter of which is used as a
- * measure of clarity)
- */
-function refineResultIndex(index, data) {
-  const [x0, x1, x2] = [index - 1, index, index + 1];
-  const [y0, y1, y2] = [data[x0], data[x1], data[x2]];
-
-  // The parabola going through the three data points can be written as
-  // y = y0(x - x1)(x - x2)/(x0 - x1)(x0 - x2)
-  //   + y1(x - x0)(x - x2)/(x1 - x0)(x1 - x2)
-  //   + y2(x - x0)(x - x1)/(x2 - x0)(x2 - x1)
-  // Given the definitions of x0, x1, and x2, we can simplify the denominators:
-  // y = y0(x - x1)(x - x2)/2
-  //   - y1(x - x0)(x - x2)
-  //   + y2(x - x0)(x - x1)/2
-  // We can expand this out and get the coefficients in standard form:
-  // a = y0/2 - y1 + y2/2
-  // b = -(y0/2)(x1 + x2) + y1(x0 + x2) - (y2/2)(x0 + x1)
-  // c = y0x1x2/2 - y1x0x2 + y2x0x1/2
-  // The index of the maximum is -b / 2a (by solving for x where the derivative
-  // is 0).
-
-  const a = y0 / 2 - y1 + y2 / 2;
-  const b = -(y0 / 2) * (x1 + x2) + y1 * (x0 + x2) - (y2 / 2) * (x0 + x1);
-  const c = (y0 * x1 * x2) / 2 - y1 * x0 * x2 + (y2 * x0 * x1) / 2;
-
-  const xMax = -b / (2 * a);
-  const yMax = a * xMax * xMax + b * xMax + c;
-  return [xMax, yMax];
-}
-
-/**
- * A class that can detect the pitch of a note from a time-domain input array.
- *
- * This class uses the McLeod pitch method (MPM) to detect pitches. MPM is
- * described in the paper 'A Smarter Way to Find Pitch' by Philip McLeod and
- * Geoff Wyvill
- * (http://miracle.otago.ac.nz/tartini/papers/A_Smarter_Way_to_Find_Pitch.pdf).
- *
- * The class holds internal buffers so that a minimal number of additional
- * allocations are necessary while performing the operation.
- *
- * @template {Buffer} T the buffer type to use internally. Inputs to the
- * pitch-detection process can be any numeric array type.
- */
-class PitchDetector {
-  /** @private @type {Autocorrelator<T>} */
-  _autocorrelator;
-  /** @private @type {T} */
-  _nsdfBuffer;
-  /** @private @type {number} */
-  _clarityThreshold = 0.9;
-  /** @private @type {number} */
-  _minVolumeAbsolute = 0.0;
-  /** @private @type {number} */
-  _maxInputAmplitude = 1.0;
-
-  /**
-   * A helper method to create an {@link PitchDetector} using {@link Float32Array} buffers.
-   *
-   * @param inputLength {number} the input array length to support
-   * @returns {PitchDetector<Float32Array>}
-   */
-  static forFloat32Array(inputLength) {
-    return new PitchDetector(inputLength, (length) => new Float32Array(length));
-  }
-
-  /**
-   * A helper method to create an {@link PitchDetector} using {@link Float64Array} buffers.
-   *
-   * @param inputLength {number} the input array length to support
-   * @returns {PitchDetector<Float64Array>}
-   */
-  static forFloat64Array(inputLength) {
-    return new PitchDetector(inputLength, (length) => new Float64Array(length));
-  }
-
-  /**
-   * A helper method to create an {@link PitchDetector} using \`number[]\` buffers.
-   *
-   * @param inputLength {number} the input array length to support
-   * @returns {PitchDetector<number[]>}
-   */
-  static forNumberArray(inputLength) {
-    return new PitchDetector(inputLength, (length) => Array(length));
-  }
-
-  /**
-   * Constructs a new {@link PitchDetector} able to handle input arrays of the
-   * given length.
-   *
-   * @param inputLength {number} the input array length to support. This
-   * \`PitchDetector\` will only support operation on arrays of this length.
-   * @param bufferSupplier {(inputLength: number) => T} the function to use for
-   * creating buffers, accepting the length of the buffer to create and
-   * returning a new buffer of that length. The values of the returned buffer
-   * need not be initialized in any particular way.
-   */
-  constructor(inputLength, bufferSupplier) {
-    this._autocorrelator = new Autocorrelator(inputLength, bufferSupplier);
-    this._nsdfBuffer = bufferSupplier(inputLength);
-  }
-
-  /**
-   * Returns the supported input length.
-   *
-   * @returns {number} the supported input length
-   */
-  get inputLength() {
-    return this._autocorrelator.inputLength;
-  }
-
-  /**
-   * Sets the clarity threshold used when identifying the correct pitch (the constant
-   * \`k\` from the MPM paper). The value must be between 0 (exclusive) and 1
-   * (inclusive), with the most suitable range being between 0.8 and 1.
-   *
-   * @param threshold {number} the clarity threshold
-   */
-  set clarityThreshold(threshold) {
-    if (!Number.isFinite(threshold) || threshold <= 0 || threshold > 1) {
-      throw new Error("clarityThreshold must be a number in the range (0, 1]");
-    }
-    this._clarityThreshold = threshold;
-  }
-
-  /**
-   * Sets the minimum detectable volume, as an absolute number between 0 and
-   * \`maxInputAmplitude\`, inclusive, to consider in a sample when detecting the
-   * pitch. If a sample fails to meet this minimum volume, \`findPitch\` will
-   * return a clarity of 0.
-   *
-   * Volume is calculated as the RMS (root mean square) of the input samples.
-   *
-   * @param volume {number} the minimum volume as an absolute amplitude value
-   */
-  set minVolumeAbsolute(volume) {
-    if (
-      !Number.isFinite(volume) ||
-      volume < 0 ||
-      volume > this._maxInputAmplitude
-    ) {
-      throw new Error(
-        \`minVolumeAbsolute must be a number in the range [0, \${this._maxInputAmplitude}]\`,
-      );
-    }
-    this._minVolumeAbsolute = volume;
-  }
-
-  /**
-   * Sets the minimum volume using a decibel measurement. Must be less than or
-   * equal to 0: 0 indicates the loudest possible sound (see
-   * \`maxInputAmplitude\`), -10 is a sound with a tenth of the volume of the
-   * loudest possible sound, etc.
-   *
-   * Volume is calculated as the RMS (root mean square) of the input samples.
-   *
-   * @param db {number} the minimum volume in decibels, with 0 being the loudest
-   * sound
-   */
-  set minVolumeDecibels(db) {
-    if (!Number.isFinite(db) || db > 0) {
-      throw new Error("minVolumeDecibels must be a number <= 0");
-    }
-    this._minVolumeAbsolute = this._maxInputAmplitude * 10 ** (db / 10);
-  }
-
-  /**
-   * Sets the maximum amplitude of an input reading. Must be greater than 0.
-   *
-   * @param amplitude {number} the maximum amplitude (absolute value) of an input reading
-   */
-  set maxInputAmplitude(amplitude) {
-    if (!Number.isFinite(amplitude) || amplitude <= 0) {
-      throw new Error("maxInputAmplitude must be a number > 0");
-    }
-    this._maxInputAmplitude = amplitude;
-  }
-
-  /**
-   * Returns the pitch detected using McLeod Pitch Method (MPM) along with a
-   * measure of its clarity.
-   *
-   * The clarity is a value between 0 and 1 (potentially inclusive) that
-   * represents how "clear" the pitch was. A clarity value of 1 indicates that
-   * the pitch was very distinct, while lower clarity values indicate less
-   * definite pitches.
-   *
-   * @param input {ArrayLike<number>} the time-domain input data
-   * @param sampleRate {number} the sample rate at which the input data was
-   * collected
-   * @returns {[number, number]} the detected pitch, in Hz, followed by the
-   * clarity. If a pitch cannot be determined from the input, such as if the
-   * volume is too low (see \`minVolumeAbsolute\` and \`minVolumeDecibels\`), this
-   * will be \`[0, 0]\`.
-   */
-  findPitch(input, sampleRate) {
-    // If the highest key maximum is less than the minimum volume, we don't need
-    // to bother detecting the pitch, as the sample is too quiet.
-    if (this._belowMinimumVolume(input)) return [0, 0];
-    this._nsdf(input);
-    const keyMaximumIndices = getKeyMaximumIndices(this._nsdfBuffer);
-    if (keyMaximumIndices.length === 0) {
-      // No key maxima means that we either don't have enough data to analyze or
-      // that the data was flawed (such as an input array of zeroes)
-      return [0, 0];
-    }
-    // The highest key maximum
-    const nMax = Math.max(...keyMaximumIndices.map((i) => this._nsdfBuffer[i]));
-    // Following the paper, we return the pitch corresponding to the first key
-    // maximum higher than K * nMax. This is guaranteed not to be undefined, since
-    // we know of at least one key maximum satisfying this condition (whichever
-    // key maximum gave us nMax).
-    const resultIndex = keyMaximumIndices.find(
-      (i) => this._nsdfBuffer[i] >= this._clarityThreshold * nMax,
-    );
-    const [refinedResultIndex, clarity] = refineResultIndex(
-      // @ts-expect-error resultIndex is guaranteed to be defined
-      resultIndex,
-      this._nsdfBuffer,
-    );
-
-    // Due to floating point errors, the clarity may occasionally come out to be
-    // slightly over 1.0. We can avoid incorrect results by clamping the value.
-    return [sampleRate / refinedResultIndex, Math.min(clarity, 1.0)];
-  }
-
-  /**
-   * Returns whether the input audio data is below the minimum volume allowed by
-   * the pitch detector.
-   *
-   * @private
-   * @param input {ArrayLike<number>}
-   * @returns {boolean}
-   */
-  _belowMinimumVolume(input) {
-    if (this._minVolumeAbsolute === 0) return false;
-    let squareSum = 0;
-    for (let i = 0; i < input.length; i++) {
-      squareSum += input[i] ** 2;
-    }
-    return Math.sqrt(squareSum / input.length) < this._minVolumeAbsolute;
-  }
-
-  /**
-   * Computes the NSDF of the input and stores it in the internal buffer. This
-   * is equation (9) in the McLeod pitch method paper.
-   *
-   * @private
-   * @param input {ArrayLike<number>}
-   */
-  _nsdf(input) {
-    // The function r'(tau) is the autocorrelation
-    this._autocorrelator.autocorrelate(input, this._nsdfBuffer);
-    // The function m'(tau) (defined in equation (6)) can be computed starting
-    // with m'(0), which is equal to 2r'(0), and then iteratively modified to
-    // get m'(1), m'(2), etc. For example, to get m'(1), we take m'(0) and
-    // subtract x_0^2 and x_{W-1}^2. Then, to get m'(2), we take m'(1) and
-    // subtract x_1^2 and x_{W-2}^2, and further values are similar (see the
-    // note at the end of section 6 in the MPM paper).
-    //
-    // The resulting array values are 2 * r'(tau) / m'(tau). We use m below as
-    // the incremental value of m'.
-    let m = 2 * this._nsdfBuffer[0];
-    /** @type {number} */ let i;
-    // As pointed out by issuefiler on GitHub, we can take advantage of the fact
-    // that m will never increase to avoid division by zero by ending this loop
-    // once m === 0. The rest of the array values after m becomes 0 will just be
-    // set to 0 themselves. We actually check for m > 0 rather than m === 0
-    // because there may be small floating-point errors that cause m to become
-    // negative rather than exactly 0.
-    for (i = 0; i < this._nsdfBuffer.length && m > 0; i++) {
-      this._nsdfBuffer[i] = (2 * this._nsdfBuffer[i]) / m;
-      m -= input[i] ** 2 + input[input.length - i - 1] ** 2;
-    }
-    // If there are any array values remaining, it means m === 0 for those
-    // values of tau, so we can just set them to 0
-    for (; i < this._nsdfBuffer.length; i++) {
-      this._nsdfBuffer[i] = 0;
-    }
-  }
-}
-
-/**
- * Rounds up the input to the next power of 2.
- *
- * @param {number} v
- * @returns {number} the next power of 2 at least as large as \`v\`
- */
-function ceilPow2(v) {
-  // https://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
-  v--;
-  v |= v >> 1;
-  v |= v >> 2;
-  v |= v >> 4;
-  v |= v >> 8;
-  v |= v >> 16;
-  v++;
-  return v;
-}
-
-'use strict';
-
-function FFT(size) {
-  this.size = size | 0;
-  if (this.size <= 1 || (this.size & (this.size - 1)) !== 0)
-    throw new Error('FFT size must be a power of two and bigger than 1');
-
-  this._csize = size << 1;
-
-  // NOTE: Use of \`var\` is intentional for old V8 versions
-  var table = new Array(this.size * 2);
-  for (var i = 0; i < table.length; i += 2) {
-    const angle = Math.PI * i / this.size;
-    table[i] = Math.cos(angle);
-    table[i + 1] = -Math.sin(angle);
-  }
-  this.table = table;
-
-  // Find size's power of two
-  var power = 0;
-  for (var t = 1; this.size > t; t <<= 1)
-    power++;
-
-  // Calculate initial step's width:
-  //   * If we are full radix-4 - it is 2x smaller to give inital len=8
-  //   * Otherwise it is the same as \`power\` to give len=4
-  this._width = power % 2 === 0 ? power - 1 : power;
-
-  // Pre-compute bit-reversal patterns
-  this._bitrev = new Array(1 << this._width);
-  for (var j = 0; j < this._bitrev.length; j++) {
-    this._bitrev[j] = 0;
-    for (var shift = 0; shift < this._width; shift += 2) {
-      var revShift = this._width - shift - 2;
-      this._bitrev[j] |= ((j >>> shift) & 3) << revShift;
-    }
-  }
-
-  this._out = null;
-  this._data = null;
-  this._inv = 0;
-}
-
-
-FFT.prototype.fromComplexArray = function fromComplexArray(complex, storage) {
-  var res = storage || new Array(complex.length >>> 1);
-  for (var i = 0; i < complex.length; i += 2)
-    res[i >>> 1] = complex[i];
-  return res;
-};
-
-FFT.prototype.createComplexArray = function createComplexArray() {
-  const res = new Array(this._csize);
-  for (var i = 0; i < res.length; i++)
-    res[i] = 0;
-  return res;
-};
-
-FFT.prototype.toComplexArray = function toComplexArray(input, storage) {
-  var res = storage || this.createComplexArray();
-  for (var i = 0; i < res.length; i += 2) {
-    res[i] = input[i >>> 1];
-    res[i + 1] = 0;
-  }
-  return res;
-};
-
-FFT.prototype.completeSpectrum = function completeSpectrum(spectrum) {
-  var size = this._csize;
-  var half = size >>> 1;
-  for (var i = 2; i < half; i += 2) {
-    spectrum[size - i] = spectrum[i];
-    spectrum[size - i + 1] = -spectrum[i + 1];
-  }
-};
-
-FFT.prototype.transform = function transform(out, data) {
-  if (out === data)
-    throw new Error('Input and output buffers must be different');
-
-  this._out = out;
-  this._data = data;
-  this._inv = 0;
-  this._transform4();
-  this._out = null;
-  this._data = null;
-};
-
-FFT.prototype.realTransform = function realTransform(out, data) {
-  if (out === data)
-    throw new Error('Input and output buffers must be different');
-
-  this._out = out;
-  this._data = data;
-  this._inv = 0;
-  this._realTransform4();
-  this._out = null;
-  this._data = null;
-};
-
-FFT.prototype.inverseTransform = function inverseTransform(out, data) {
-  if (out === data)
-    throw new Error('Input and output buffers must be different');
-
-  this._out = out;
-  this._data = data;
-  this._inv = 1;
-  this._transform4();
-  for (var i = 0; i < out.length; i++)
-    out[i] /= this.size;
-  this._out = null;
-  this._data = null;
-};
-
-// radix-4 implementation
-//
-// NOTE: Uses of \`var\` are intentional for older V8 version that do not
-// support both \`let compound assignments\` and \`const phi\`
-FFT.prototype._transform4 = function _transform4() {
-  var out = this._out;
-  var size = this._csize;
-
-  // Initial step (permute and transform)
-  var width = this._width;
-  var step = 1 << width;
-  var len = (size / step) << 1;
-
-  var outOff;
-  var t;
-  var bitrev = this._bitrev;
-  if (len === 4) {
-    for (outOff = 0, t = 0; outOff < size; outOff += len, t++) {
-      const off = bitrev[t];
-      this._singleTransform2(outOff, off, step);
-    }
-  } else {
-    // len === 8
-    for (outOff = 0, t = 0; outOff < size; outOff += len, t++) {
-      const off = bitrev[t];
-      this._singleTransform4(outOff, off, step);
-    }
-  }
-
-  // Loop through steps in decreasing order
-  var inv = this._inv ? -1 : 1;
-  var table = this.table;
-  for (step >>= 2; step >= 2; step >>= 2) {
-    len = (size / step) << 1;
-    var quarterLen = len >>> 2;
-
-    // Loop through offsets in the data
-    for (outOff = 0; outOff < size; outOff += len) {
-      // Full case
-      var limit = outOff + quarterLen;
-      for (var i = outOff, k = 0; i < limit; i += 2, k += step) {
-        const A = i;
-        const B = A + quarterLen;
-        const C = B + quarterLen;
-        const D = C + quarterLen;
-
-        // Original values
-        const Ar = out[A];
-        const Ai = out[A + 1];
-        const Br = out[B];
-        const Bi = out[B + 1];
-        const Cr = out[C];
-        const Ci = out[C + 1];
-        const Dr = out[D];
-        const Di = out[D + 1];
-
-        // Middle values
-        const MAr = Ar;
-        const MAi = Ai;
-
-        const tableBr = table[k];
-        const tableBi = inv * table[k + 1];
-        const MBr = Br * tableBr - Bi * tableBi;
-        const MBi = Br * tableBi + Bi * tableBr;
-
-        const tableCr = table[2 * k];
-        const tableCi = inv * table[2 * k + 1];
-        const MCr = Cr * tableCr - Ci * tableCi;
-        const MCi = Cr * tableCi + Ci * tableCr;
-
-        const tableDr = table[3 * k];
-        const tableDi = inv * table[3 * k + 1];
-        const MDr = Dr * tableDr - Di * tableDi;
-        const MDi = Dr * tableDi + Di * tableDr;
-
-        // Pre-Final values
-        const T0r = MAr + MCr;
-        const T0i = MAi + MCi;
-        const T1r = MAr - MCr;
-        const T1i = MAi - MCi;
-        const T2r = MBr + MDr;
-        const T2i = MBi + MDi;
-        const T3r = inv * (MBr - MDr);
-        const T3i = inv * (MBi - MDi);
-
-        // Final values
-        const FAr = T0r + T2r;
-        const FAi = T0i + T2i;
-
-        const FCr = T0r - T2r;
-        const FCi = T0i - T2i;
-
-        const FBr = T1r + T3i;
-        const FBi = T1i - T3r;
-
-        const FDr = T1r - T3i;
-        const FDi = T1i + T3r;
-
-        out[A] = FAr;
-        out[A + 1] = FAi;
-        out[B] = FBr;
-        out[B + 1] = FBi;
-        out[C] = FCr;
-        out[C + 1] = FCi;
-        out[D] = FDr;
-        out[D + 1] = FDi;
-      }
-    }
-  }
-};
-
-// radix-2 implementation
-//
-// NOTE: Only called for len=4
-FFT.prototype._singleTransform2 = function _singleTransform2(outOff, off,
-                                                             step) {
-  const out = this._out;
-  const data = this._data;
-
-  const evenR = data[off];
-  const evenI = data[off + 1];
-  const oddR = data[off + step];
-  const oddI = data[off + step + 1];
-
-  const leftR = evenR + oddR;
-  const leftI = evenI + oddI;
-  const rightR = evenR - oddR;
-  const rightI = evenI - oddI;
-
-  out[outOff] = leftR;
-  out[outOff + 1] = leftI;
-  out[outOff + 2] = rightR;
-  out[outOff + 3] = rightI;
-};
-
-// radix-4
-//
-// NOTE: Only called for len=8
-FFT.prototype._singleTransform4 = function _singleTransform4(outOff, off,
-                                                             step) {
-  const out = this._out;
-  const data = this._data;
-  const inv = this._inv ? -1 : 1;
-  const step2 = step * 2;
-  const step3 = step * 3;
-
-  // Original values
-  const Ar = data[off];
-  const Ai = data[off + 1];
-  const Br = data[off + step];
-  const Bi = data[off + step + 1];
-  const Cr = data[off + step2];
-  const Ci = data[off + step2 + 1];
-  const Dr = data[off + step3];
-  const Di = data[off + step3 + 1];
-
-  // Pre-Final values
-  const T0r = Ar + Cr;
-  const T0i = Ai + Ci;
-  const T1r = Ar - Cr;
-  const T1i = Ai - Ci;
-  const T2r = Br + Dr;
-  const T2i = Bi + Di;
-  const T3r = inv * (Br - Dr);
-  const T3i = inv * (Bi - Di);
-
-  // Final values
-  const FAr = T0r + T2r;
-  const FAi = T0i + T2i;
-
-  const FBr = T1r + T3i;
-  const FBi = T1i - T3r;
-
-  const FCr = T0r - T2r;
-  const FCi = T0i - T2i;
-
-  const FDr = T1r - T3i;
-  const FDi = T1i + T3r;
-
-  out[outOff] = FAr;
-  out[outOff + 1] = FAi;
-  out[outOff + 2] = FBr;
-  out[outOff + 3] = FBi;
-  out[outOff + 4] = FCr;
-  out[outOff + 5] = FCi;
-  out[outOff + 6] = FDr;
-  out[outOff + 7] = FDi;
-};
-
-// Real input radix-4 implementation
-FFT.prototype._realTransform4 = function _realTransform4() {
-  var out = this._out;
-  var size = this._csize;
-
-  // Initial step (permute and transform)
-  var width = this._width;
-  var step = 1 << width;
-  var len = (size / step) << 1;
-
-  var outOff;
-  var t;
-  var bitrev = this._bitrev;
-  if (len === 4) {
-    for (outOff = 0, t = 0; outOff < size; outOff += len, t++) {
-      const off = bitrev[t];
-      this._singleRealTransform2(outOff, off >>> 1, step >>> 1);
-    }
-  } else {
-    // len === 8
-    for (outOff = 0, t = 0; outOff < size; outOff += len, t++) {
-      const off = bitrev[t];
-      this._singleRealTransform4(outOff, off >>> 1, step >>> 1);
-    }
-  }
-
-  // Loop through steps in decreasing order
-  var inv = this._inv ? -1 : 1;
-  var table = this.table;
-  for (step >>= 2; step >= 2; step >>= 2) {
-    len = (size / step) << 1;
-    var halfLen = len >>> 1;
-    var quarterLen = halfLen >>> 1;
-    var hquarterLen = quarterLen >>> 1;
-
-    // Loop through offsets in the data
-    for (outOff = 0; outOff < size; outOff += len) {
-      for (var i = 0, k = 0; i <= hquarterLen; i += 2, k += step) {
-        var A = outOff + i;
-        var B = A + quarterLen;
-        var C = B + quarterLen;
-        var D = C + quarterLen;
-
-        // Original values
-        var Ar = out[A];
-        var Ai = out[A + 1];
-        var Br = out[B];
-        var Bi = out[B + 1];
-        var Cr = out[C];
-        var Ci = out[C + 1];
-        var Dr = out[D];
-        var Di = out[D + 1];
-
-        // Middle values
-        var MAr = Ar;
-        var MAi = Ai;
-
-        var tableBr = table[k];
-        var tableBi = inv * table[k + 1];
-        var MBr = Br * tableBr - Bi * tableBi;
-        var MBi = Br * tableBi + Bi * tableBr;
-
-        var tableCr = table[2 * k];
-        var tableCi = inv * table[2 * k + 1];
-        var MCr = Cr * tableCr - Ci * tableCi;
-        var MCi = Cr * tableCi + Ci * tableCr;
-
-        var tableDr = table[3 * k];
-        var tableDi = inv * table[3 * k + 1];
-        var MDr = Dr * tableDr - Di * tableDi;
-        var MDi = Dr * tableDi + Di * tableDr;
-
-        // Pre-Final values
-        var T0r = MAr + MCr;
-        var T0i = MAi + MCi;
-        var T1r = MAr - MCr;
-        var T1i = MAi - MCi;
-        var T2r = MBr + MDr;
-        var T2i = MBi + MDi;
-        var T3r = inv * (MBr - MDr);
-        var T3i = inv * (MBi - MDi);
-
-        // Final values
-        var FAr = T0r + T2r;
-        var FAi = T0i + T2i;
-
-        var FBr = T1r + T3i;
-        var FBi = T1i - T3r;
-
-        out[A] = FAr;
-        out[A + 1] = FAi;
-        out[B] = FBr;
-        out[B + 1] = FBi;
-
-        // Output final middle point
-        if (i === 0) {
-          var FCr = T0r - T2r;
-          var FCi = T0i - T2i;
-          out[C] = FCr;
-          out[C + 1] = FCi;
-          continue;
-        }
-
-        // Do not overwrite ourselves
-        if (i === hquarterLen)
-          continue;
-
-        // In the flipped case:
-        // MAi = -MAi
-        // MBr=-MBi, MBi=-MBr
-        // MCr=-MCr
-        // MDr=MDi, MDi=MDr
-        var ST0r = T1r;
-        var ST0i = -T1i;
-        var ST1r = T0r;
-        var ST1i = -T0i;
-        var ST2r = -inv * T3i;
-        var ST2i = -inv * T3r;
-        var ST3r = -inv * T2i;
-        var ST3i = -inv * T2r;
-
-        var SFAr = ST0r + ST2r;
-        var SFAi = ST0i + ST2i;
-
-        var SFBr = ST1r + ST3i;
-        var SFBi = ST1i - ST3r;
-
-        var SA = outOff + quarterLen - i;
-        var SB = outOff + halfLen - i;
-
-        out[SA] = SFAr;
-        out[SA + 1] = SFAi;
-        out[SB] = SFBr;
-        out[SB + 1] = SFBi;
-      }
-    }
-  }
-};
-
-// radix-2 implementation
-//
-// NOTE: Only called for len=4
-FFT.prototype._singleRealTransform2 = function _singleRealTransform2(outOff,
-                                                                     off,
-                                                                     step) {
-  const out = this._out;
-  const data = this._data;
-
-  const evenR = data[off];
-  const oddR = data[off + step];
-
-  const leftR = evenR + oddR;
-  const rightR = evenR - oddR;
-
-  out[outOff] = leftR;
-  out[outOff + 1] = 0;
-  out[outOff + 2] = rightR;
-  out[outOff + 3] = 0;
-};
-
-// radix-4
-//
-// NOTE: Only called for len=8
-FFT.prototype._singleRealTransform4 = function _singleRealTransform4(outOff,
-                                                                     off,
-                                                                     step) {
-  const out = this._out;
-  const data = this._data;
-  const inv = this._inv ? -1 : 1;
-  const step2 = step * 2;
-  const step3 = step * 3;
-
-  // Original values
-  const Ar = data[off];
-  const Br = data[off + step];
-  const Cr = data[off + step2];
-  const Dr = data[off + step3];
-
-  // Pre-Final values
-  const T0r = Ar + Cr;
-  const T1r = Ar - Cr;
-  const T2r = Br + Dr;
-  const T3r = inv * (Br - Dr);
-
-  // Final values
-  const FAr = T0r + T2r;
-
-  const FBr = T1r;
-  const FBi = -T3r;
-
-  const FCr = T0r - T2r;
-
-  const FDr = T1r;
-  const FDi = T3r;
-
-  out[outOff] = FAr;
-  out[outOff + 1] = 0;
-  out[outOff + 2] = FBr;
-  out[outOff + 3] = FBi;
-  out[outOff + 4] = FCr;
-  out[outOff + 5] = 0;
-  out[outOff + 6] = FDr;
-  out[outOff + 7] = FDi;
-};
-
-// Real-time pitch + onset worklet for the voice MIDI controller.
-// Runs McLeod pitch detection (via Pitchy) and spectral-flux onset
-// detection per hop, posts compact frames to the main thread.
-class VoicePitchProcessor extends AudioWorkletProcessor {
-  constructor() {
-    super();
-    this.WIN = 1024;
-    this.HOP = 256;
-    this.buf = new Float32Array(this.WIN);
-    this.pos = 0;
-    this.det = null;
-    this.prevMag = null;
-    this.fft = null;
-    this.hann = new Float32Array(this.WIN);
-    for (let i = 0; i < this.WIN; i++)
-      this.hann[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / this.WIN));
-    this.clarityMin = 0.82;
-    this.port.onmessage = (e) => {
-      if (e.data.type === 'init') {
-        // Pitchy is injected before this class definition
-        this.det = PitchDetector.forFloat32Array(this.WIN);
-        this.det.clarityThreshold = this.clarityMin;
-        this.fft = new FFT(this.WIN);
-      } else if (e.data.type === 'config') {
-        if (e.data.clarityMin) {
-          this.clarityMin = e.data.clarityMin;
-          if (this.det) this.det.clarityThreshold = this.clarityMin;
-        }
-      }
-    };
-  }
-
-  analyzeFrame() {
-    const WIN = this.WIN, sr = sampleRate;
-    const w = this.buf;
-    let rms = 0;
-    for (let j = 0; j < WIN; j++) rms += w[j] * w[j];
-    rms = Math.sqrt(rms / WIN);
-    let f = 0, c = 0;
-    if (rms > 1e-4 && this.det) {
-      const r = this.det.findPitch(w, sr);
-      f = r[0]; c = r[1];
-    }
-    // spectral features for triggers / vowel
-    let centroid = 0, flux = 0, rolloff = 0, zcr = 0;
-    for (let j = 1; j < WIN; j++) if ((w[j] >= 0) !== (w[j-1] >= 0)) zcr++;
-    zcr /= WIN;
-    if (this.fft) {
-      const rIn = new Float32Array(WIN);
-      const cOut = new Array(WIN * 2);
-      for (let j = 0; j < WIN; j++) rIn[j] = w[j] * this.hann[j];
-      this.fft.realTransform(cOut, rIn);
-      this.fft.completeSpectrum(cOut);
-      let sM = 0, sF = 0;
-      const NB = WIN / 2;
-      const mag = new Float32Array(NB);
-      for (let j = 1; j < NB; j++) {
-        const m = Math.hypot(cOut[2 * j], cOut[2 * j + 1]);
-        mag[j] = m; sM += m; sF += m * j;
-        if (this.prevMag) { const d = m - this.prevMag[j]; if (d > 0) flux += d; }
-      }
-      if (sM > 1e-9) {
-        centroid = (sF / sM) * sr / WIN;
-        // rolloff: bin below which 85% of energy sits
-        let acc = 0;
-        for (let j = 1; j < NB; j++) {
-          acc += mag[j];
-          if (acc >= sM * 0.85) { rolloff = j * sr / WIN; break; }
-        }
-      }
-      this.prevMag = mag;
-    }
-    this.port.postMessage({ type: 'frame', f, c, rms, centroid, flux, rolloff, zcr });
-  }
-
-  process(inputs) {
-    const inp = inputs[0];
-    if (!inp || !inp.length) return true;
-    const ch = inp[0];
-    for (let i = 0; i < ch.length; i++) {
-      this.buf[this.pos++] = ch[i];
-      if (this.pos >= this.WIN) {
-        if (this.det) this.analyzeFrame();
-        // shift by HOP
-        this.buf.copyWithin(0, this.HOP);
-        this.pos = this.WIN - this.HOP;
-      }
-    }
-    return true;
-  }
-}
-registerProcessor('voice-pitch', VoicePitchProcessor);
-`;
-</script>
-<script>
-"use strict";
-/* ================= state ================= */
-const $ = id => document.getElementById(id);
-const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-const SCALES = {
-  Chromatic: [0,1,2,3,4,5,6,7,8,9,10,11],
-  Major: [0,2,4,5,7,9,11], Minor: [0,2,3,5,7,8,10],
-  Pentatonic: [0,2,4,7,9], Blues: [0,3,5,6,7,10], Dorian: [0,2,3,5,7,9,10],
-  Phrygian: [0,1,3,5,7,8,10], Lydian: [0,2,4,6,7,9,11],
-  Mixolydian: [0,2,4,5,7,9,10], Locrian: [0,1,3,5,6,8,10],
-  HarmonicMinor: [0,2,3,5,7,8,11], MelodicMinor: [0,2,3,5,7,9,11],
-  WholeTone: [0,2,4,6,8,10], Diminished: [0,2,3,5,6,8,9,11]
-};
-const state = {
-  running: false, ac: null, worklet: null, micStream: null,
-  scale: 'Chromatic', root: 0, mutedNotes: new Set(),
-  stickiness: 0.35, bendMode: 'intelli', bendRange: 2,
-  curNote: -1, curFreq: 0, lastOnset: 0,
-  midiOut: null, midiCh: 0, midiReady: false,
-  pads: [], // {name, midi, takes: [{centroid, dur}], trained}
-  training: null,
-  keyBuf: []
-};
-for (let i = 0; i < 128; i++) { const o = document.createElement('option'); o.value = i; o.textContent = i; $('midiCh').appendChild(o); }
-for (let i = 0; i < 12; i++) { const o = document.createElement('option'); o.value = i; o.textContent = NOTE_NAMES[i]; $('rootSel').appendChild(o); }
-
-/* ================= tabs ================= */
-document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
-  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
-  document.querySelectorAll('.page').forEach(x => x.classList.remove('active'));
-  t.classList.add('active');
-  $('page-' + t.dataset.page).classList.add('active');
-});
-
-/* ================= audio graph ================= */
-async function startMic() {
-  state.ac = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
-  const ac = state.ac;
-  await ac.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET_SRC], { type: 'application/javascript' })));
-  state.micStream = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-  });
-  const src = ac.createMediaStreamSource(state.micStream);
-  state.worklet = new AudioWorkletNode(ac, 'voice-pitch');
-  // inject Pitchy + FFT into worklet scope via prepended message is not possible;
-  // instead we baked them: WORKLET_SRC starts with the vendored libs.
-  src.connect(state.worklet);
-  state.worklet.port.postMessage({ type: 'init' });
-  state.worklet.port.onmessage = onFrame;
-  state.running = true;
-  $('startBtn').textContent = 'Stop';
-  $('startBtn').onclick = stopMic;
-  $('trainBtn').disabled = false;
-  $('capBtn').disabled = false;
-  $('calBtn').disabled = false;
-  $('status').textContent = 'listening… sing a note or tap a trained pad sound';
-  initSynth();
-}
-
-function stopMic() {
-  state.running = false;
-  try { state.micStream.getTracks().forEach(t => t.stop()); } catch (e) {}
-  try { state.worklet.disconnect(); } catch (e) {}
-  try { state.ac.close(); } catch (e) {}
-  state.ac = null;
-  if (state.curNote >= 0) { noteOff(state.curNote); state.curNote = -1; }
-  $('startBtn').textContent = 'Start microphone';
-  $('startBtn').onclick = startMic;
-  $('trainBtn').disabled = true;
-  $('capBtn').disabled = true;
-  $('calBtn').disabled = true;
-  $('status').textContent = 'stopped';
-}
-$('startBtn').onclick = startMic;
-
-/* ================= internal synth ================= */
-let synthOsc = null, synthGain = null, synthFilter = null;
-function initSynth() {
-  const ac = state.ac;
-  synthOsc = ac.createOscillator(); synthOsc.type = 'sawtooth';
-  synthFilter = ac.createBiquadFilter(); synthFilter.type = 'lowpass'; synthFilter.frequency.value = 2400;
-  synthGain = ac.createGain(); synthGain.gain.value = 0;
-  synthOsc.connect(synthFilter); synthFilter.connect(synthGain); synthGain.connect(ac.destination);
-  synthOsc.start();
-}
-const midi2hz = m => 440 * Math.pow(2, (m - 69) / 12);
-function synthNoteOn(midi, vel) {
-  if (!state.ac || !$('useSynth').checked) return;
-  synthOsc.frequency.setTargetAtTime(midi2hz(midi), state.ac.currentTime, 0.01);
-  synthGain.gain.setTargetAtTime(0.25 * vel, state.ac.currentTime, 0.01);
-}
-function synthNoteOff() {
-  if (!state.ac) return;
-  synthGain.gain.setTargetAtTime(0, state.ac.currentTime, 0.03);
-}
-
-/* ================= MIDI ================= */
-$('midiBtn').onclick = async () => {
-  if (!navigator.requestMIDIAccess) { $('midiStatus').textContent = 'Web MIDI not supported in this browser.'; return; }
-  try {
-    const access = await navigator.requestMIDIAccess();
-    const outs = [...access.outputs.values()];
-    const sel = $('midiOut');
-    sel.innerHTML = '<option value="">(no MIDI; internal synth only)</option>';
-    outs.forEach((o, i) => {
-      const op = document.createElement('option'); op.value = i; op.textContent = o.name; sel.appendChild(op);
-    });
-    state.midiAccess = access; state.midiReady = true;
-    $('midiStatus').textContent = outs.length ? outs.length + ' output(s) found.' : 'no MIDI outputs found. Add a virtual port to connect one.';
-  } catch (e) { $('midiStatus').textContent = 'MIDI access denied.'; }
-};
-$('midiOut').onchange = e => {
-  const outs = [...state.midiAccess.outputs.values()];
-  state.midiOut = outs[+e.target.value] || null;
-};
-$('midiCh').onchange = e => state.midiCh = +e.target.value;
-function midiSend(bytes) {
-  if (state.midiOut) try { state.midiOut.send(bytes); } catch (e) {}
-}
-function noteOn(midi, vel) {
-  midiSend([0x90 | state.midiCh, midi, Math.round(vel * 127)]);
-  synthNoteOn(midi, vel);
-  // chords mode: stack a chord on a separate channel
-  if ($('chordsOn').checked) {
-    const set = $('chordSet').value;
-    const iv = set === 'triad' ? [4, 7] : set === 'pop' ? [4, 7, 11] : [7, 12];
-    const ch2 = (state.midiCh + 1) % 16;
-    state.chordNotes = iv.map(i => midi + i);
-    for (const cm of state.chordNotes) {
-      midiSend([0x90 | ch2, cm, Math.round(vel * 100)]);
-    }
-  }
-  const log = $('midiLog');
-  const s = document.createElement('span'); s.className = 'midi-note';
-  s.textContent = NOTE_NAMES[midi % 12] + (Math.floor(midi / 12) - 1);
-  log.prepend(s);
-  while (log.children.length > 12) log.lastChild.remove();
-}
-function noteOff(midi) {
-  midiSend([0x80 | state.midiCh, midi, 0]);
-  lastBendVal = -1; // reset bend so next note starts clean
-  if (state.chordNotes) {
-    const ch2 = (state.midiCh + 1) % 16;
-    for (const cm of state.chordNotes) midiSend([0x80 | ch2, cm, 0]);
-    state.chordNotes = null;
-  }
-  synthNoteOff();
-}
-let lastBendVal = -1;
-function pitchBend(semitones) {
-  const v = Math.max(-1, Math.min(1, semitones / state.bendRange));
-  const val = Math.round(8192 + v * 8191);
-  // only send when the bend actually moved (14-bit threshold)
-  if (Math.abs(val - lastBendVal) < 40) return;
-  lastBendVal = val;
-  midiSend([0xE0 | state.midiCh, val & 0x7f, (val >> 7) & 0x7f]);
-}
-function sendCC(cc, val) {
-  midiSend([0xB0 | state.midiCh, cc, Math.max(0, Math.min(127, Math.round(val * 127)))]);
-}
-
-/* ================= pitch → notes ================= */
-const hz2midi = h => 69 + 12 * Math.log2(h / 440);
-function snapToScale(mf) {
-  const iv = SCALES[state.scale];
-  const base = Math.round(mf);
-  let best = base, bestD = 1e9;
-  for (let o = -2; o <= 2; o++) for (const s of iv) {
-    const m = Math.floor(base / 12) * 12 + o * 12 + s + state.root;
-    const d = Math.abs(m - mf);
-    if (d < bestD) { bestD = d; best = m; }
-  }
-  return best;
-}
-let smoothF = 0;
-// note hysteresis: require stable frames before on/off/change
-let pendingNote = -1, pendingCount = 0;
-const ATTACK_FRAMES = 5, RELEASE_FRAMES = 10;
-let releaseCount = 0;
-function onFrame(e) {
-  const d = e.data;
-  if (d.type !== 'frame') return;
-  $('levelVal').textContent = d.rms.toFixed(3);
-  state.lastRms = d.rms;
-  drawMeters(d);
-
-  // trigger detection first (percussive beats pitch)
-  if (checkTriggers(d)) return;
-
-  const tone = d.c >= 0.82 && d.rms > noiseFloor && d.f > 60 && d.f < 4000;
-  if (!tone) {
-    pendingNote = -1; pendingCount = 0;
-    if (state.curNote >= 0 && d.rms < noiseFloor * 0.5) {
-      if (++releaseCount >= RELEASE_FRAMES) {
-        noteOff(state.curNote); state.curNote = -1; releaseCount = 0;
-      }
-    } else releaseCount = 0;
-    return;
-  }
-  releaseCount = 0;
-  // stickiness: smooth frequency
-  const a = 1 - state.stickiness * 0.9;
-  smoothF = smoothF ? smoothF + a * (d.f - smoothF) : d.f;
-  let mf = hz2midi(smoothF);
-  const target = snapToScale(mf);
-  if (state.mutedNotes.has(target % 12)) return;
-
-  // pitch bend
-  if (state.bendMode !== 'off' && state.curNote >= 0) {
-    const anchor = state.bendMode === 'intelli' ? state.curNote : null;
-    const ref = anchor !== null ? anchor : target;
-    const semis = mf - ref;
-    if (Math.abs(semis) < state.bendRange) pitchBend(semis);
-  }
-
-  // hysteresis: target must be stable for ATTACK_FRAMES before we commit.
-  // semitone hysteresis around the current note scales with stickiness:
-  // a singing note has to move decisively before we let go of it.
-  if (state.curNote >= 0) {
-    const hyst = 0.35 + state.stickiness * 0.9;
-    if (Math.abs(mf - state.curNote) < hyst) {
-      pendingNote = state.curNote; pendingCount = ATTACK_FRAMES;
-    }
-  }
-  if (target !== pendingNote) { pendingNote = target; pendingCount = 1; }
-  else pendingCount++;
-  if (pendingCount >= ATTACK_FRAMES && target !== state.curNote) {
-    if (state.curNote >= 0) noteOff(state.curNote);
-    state.curNote = target;
-    noteOn(target, Math.min(1, d.rms * 6));
-    pendingCount = 0;
-    state.keyBuf.push(target % 12);
-    if (state.keyBuf.length > 32) state.keyBuf.shift();
-  } else {
-    state.curFreq = d.f;
-  }
-  drawWheel(d.f);
-}
-
-/* ================= note wheel ================= */
-const wheel = $('noteWheel'), wctx = wheel.getContext('2d');
-function drawWheel(freq) {
-  const W = 300, C = 150, R = 120;
-  wctx.clearRect(0, 0, W, W);
-  const cur = freq > 0 ? ((Math.round(hz2midi(freq)) % 12) + 12) % 12 : -1;
-  for (let i = 0; i < 12; i++) {
-    const a0 = (i / 12) * Math.PI * 2 - Math.PI / 2;
-    const a1 = ((i + 1) / 12) * Math.PI * 2 - Math.PI / 2;
-    wctx.beginPath(); wctx.moveTo(C, C);
-    wctx.arc(C, C, R, a0, a1); wctx.closePath();
-    const muted = state.mutedNotes.has(i);
-    wctx.fillStyle = muted ? '#1a1c22' : (i === cur ? '#3a7d5d' : '#1e2129');
-    wctx.fill();
-    wctx.strokeStyle = '#2a2e3a'; wctx.stroke();
-    const am = (a0 + a1) / 2;
-    wctx.fillStyle = muted ? '#555' : '#cfe';
-    wctx.font = '13px system-ui'; wctx.textAlign = 'center'; wctx.textBaseline = 'middle';
-    wctx.fillText(NOTE_NAMES[i], C + Math.cos(am) * (R - 22), C + Math.sin(am) * (R - 22));
-  }
-  // centre: current note name
-  wctx.fillStyle = '#e8eaf0'; wctx.font = 'bold 26px system-ui';
-  wctx.fillText(cur >= 0 ? NOTE_NAMES[cur] : '–', C, C);
-}
-wheel.onclick = e => {
-  const r = wheel.getBoundingClientRect();
-  const x = (e.clientX - r.left) * (300 / r.width) - 150;
-  const y = (e.clientY - r.top) * (300 / r.height) - 150;
-  if (Math.hypot(x, y) > 120) return;
-  let ang = Math.atan2(y, x) + Math.PI / 2;
-  if (ang < 0) ang += Math.PI * 2;
-  const seg = Math.floor(ang / (Math.PI * 2) * 12) % 12;
-  if (state.mutedNotes.has(seg)) state.mutedNotes.delete(seg); else state.mutedNotes.add(seg);
-  drawWheel(state.curFreq);
-};
-drawWheel(0);
-
-/* ================= vowel meters → CC ================= */
-function vowelFeatures(d) {
-  // crude vowel estimate from centroid + rms bands; aaa=open/low, eee=bright/high, ooo=round/mid
-  const c = d.centroid;
-  const aaa = Math.max(0, 1 - Math.abs(c - 900) / 900);
-  const ooo = Math.max(0, 1 - Math.abs(c - 500) / 500);
-  const eee = Math.max(0, 1 - Math.abs(c - 2400) / 1400);
-  const env = Math.min(1, d.rms * 8);
-  return { aaa, ooo, eee, env };
-}
-function drawMeter(id, v) {
-  const c = $(id), x = c.getContext('2d');
-  x.clearRect(0, 0, 64, 64);
-  x.beginPath(); x.arc(32, 32, 26, 0, Math.PI * 2);
-  x.strokeStyle = '#2a2e3a'; x.lineWidth = 8; x.stroke();
-  x.beginPath(); x.arc(32, 32, 26, -Math.PI / 2, -Math.PI / 2 + v * Math.PI * 2);
-  x.strokeStyle = '#3a7d5d'; x.lineWidth = 8; x.stroke();
-}
-let lastCC = 0;
-function drawMeters(d) {
-  const v = vowelFeatures(d);
-  drawMeter('mAaa', v.aaa); drawMeter('mOoo', v.ooo);
-  drawMeter('mEee', v.eee); drawMeter('mEnv', v.env);
-  const now = performance.now();
-  if (now - lastCC > 60 && d.rms > 0.01) {
-    lastCC = now;
-    const gate = (key, val) => ccBypass[key] ? 0 : (val > ccThresh[key] ? (val - ccThresh[key]) / (1 - ccThresh[key]) : 0);
-    const ga = gate('aaa', v.aaa), go = gate('ooo', v.ooo), ge = gate('eee', v.eee), gn = gate('env', v.env);
-    if (ga) sendCC(ccMap.aaa, ga);
-    if (go) sendCC(ccMap.ooo, go);
-    if (ge) sendCC(ccMap.eee, ge);
-    if (gn) sendCC(ccMap.env, gn);
-  }
-}
-
-/* ================= triggers ================= */
-function initPads() {
-  const wrap = $('pads'); wrap.innerHTML = '';
-  const sel = $('trainPad'); sel.innerHTML = '';
-  const defaults = [['kick', 36], ['snare', 38], ['hat', 42], ['clap', 39],
-                    ['tom', 43], ['rim', 37], ['shaker', 44], ['snap', 40]];
-  state.pads = defaults.map(([name, midi], i) => ({ name, midi, takes: [], trained: false }));
-  state.pads.forEach((p, i) => {
-    const d = document.createElement('div'); d.className = 'pad'; d.id = 'pad' + i;
-    d.innerHTML = '<div class="pname">' + p.name + '</div><div>C' + (i + 1) + ' · ' + p.midi + '</div>';
-    wrap.appendChild(d);
-    const o = document.createElement('option'); o.value = i; o.textContent = p.name; sel.appendChild(o);
-  });
-}
-initPads();
-
-let onsetBuf = [];
-/* k-NN trigger classifier on [centroid, rolloff, zcr] with per-feature
-   normalization from the training takes. k=3, majority vote. */
-function featVec(d) { return [d.centroid / 8000, d.rolloff / 12000, d.zcr * 4]; }
-function featDist(a, b) {
-  let s = 0;
-  for (let i = 0; i < 3; i++) { const dd = a[i] - b[i]; s += dd * dd; }
-  return Math.sqrt(s);
-}
-function checkTriggers(d) {
-  // flux-based onset; classify against trained pad templates
-  onsetBuf.push(d);
-  if (onsetBuf.length > 30) onsetBuf.shift();
-  const trained = state.pads.filter(p => p.trained);
-  if (!trained.length || !state.running) return false;
-  // fixed flux threshold: percussive onsets are orders of magnitude above
-  // the room-noise floor. Adaptive med*3 missed soft kicks after loud hats.
-  if (d.flux > 8 && d.c < 0.6 && d.rms > 0.03) {
-    const now = performance.now();
-    // if we're mid-window, keep collecting regardless of debounce
-    if (state.onsetWin && state.onsetWin.length > 0) {
-      state.onsetWin.push(featVec(d));
-    } else {
-      if (now - state.lastOnset < 120) return true;
-      state.lastOnset = now;
-      state.onsetWin = [featVec(d)];
-    }
-    if (state.onsetWin.length < 4) return true; // collecting
-    const fv = [0, 1, 2].map(i =>
-      state.onsetWin.reduce((s, v) => s + v[i], 0) / state.onsetWin.length);
-    state.onsetWin = [];
-    // k-NN over all takes
-    const votes = [];
-    for (const p of trained) for (const t of p.takes) votes.push({ p, d: featDist(fv, t.fv) });
-    votes.sort((a, b) => a.d - b.d);
-    const k = Math.min(3, votes.length);
-    const tally = {};
-    for (let i = 0; i < k; i++) tally[votes[i].p.name] = (tally[votes[i].p.name] || 0) + 1;
-    const winName = Object.entries(tally).sort((a, b) => b[1] - a[1])[0][0];
-    const best = trained.find(p => p.name === winName);
-    // confidence: nearest distance must be reasonably close
-    if (best && votes[0].d < 1.2) {
-      const idx = state.pads.indexOf(best);
-      const el = $('pad' + idx);
-      el.classList.add('hit'); setTimeout(() => el.classList.remove('hit'), 120);
-      const vel = Math.min(1, d.rms * 5);
-      midiSend([0x90 | state.midiCh, best.midi, Math.round(vel * 127)]);
-      capEvent('on', best.midi, vel);
-      setTimeout(() => { midiSend([0x80 | state.midiCh, best.midi, 0]); capEvent('off', best.midi, 0); }, 90);
-      if ($('useSynth').checked) playPadSound(best.name, vel);
-      return true;
-    }
-  }
-  return false;
-}
-function playPadSound(name, vel) {
-  const ac = state.ac; if (!ac) return;
-  const t = ac.currentTime;
-  if (name === 'kick') {
-    const o = ac.createOscillator(), g = ac.createGain();
-    o.frequency.setValueAtTime(160, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.1);
-    g.gain.setValueAtTime(0.8 * vel, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
-    o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 0.3);
-  } else {
-    const len = ac.sampleRate * 0.15, b = ac.createBuffer(1, len, ac.sampleRate);
-    const chd = b.getChannelData(0);
-    for (let i = 0; i < len; i++) chd[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ac.sampleRate * 0.03));
-    const n = ac.createBufferSource(); n.buffer = b;
-    const f = ac.createBiquadFilter(); f.type = name === 'hat' ? 'highpass' : 'bandpass';
-    f.frequency.value = name === 'hat' ? 7000 : 1900;
-    const g = ac.createGain(); g.gain.value = 0.5 * vel;
-    n.connect(f); f.connect(g); g.connect(ac.destination); n.start(t);
-  }
-}
-
-/* ---- training ---- */
-$('trainBtn').onclick = () => {
-  const i = +$('trainPad').value;
-  const pad = state.pads[i];
-  pad.name = $('padName').value || pad.name;
-  pad.midi = +$('padMidi').value || pad.midi;
-  state.training = { pad, takes: [], lastTake: 0 };
-  $('trainStatus').textContent = 'make the "' + pad.name + '" sound 5 times…';
-  $('trainBtn').disabled = true;
-};
-// training capture hooks into onFrame via a flag checked in checkTriggers path:
-// simpler: dedicated listener set while training
-const origCheck = checkTriggers;
-checkTriggers = function (d) {
-  const tr = state.training;
-  if (tr && state.running) {
-    if (d.flux > 8 && d.c < 0.6 && d.rms > 0.03) {
-      const now = performance.now();
-      // if we're mid-window, keep collecting regardless of debounce
-      if (tr.win && tr.win.length > 0) {
-        tr.win.push(featVec(d));
-      } else {
-        if (now - tr.lastTake > 250) {
-          tr.lastTake = now;
-          tr.win = [featVec(d)];
-        } else return true;
-      }
-      // average over a short window for stable features (same as classification)
-      if (tr.win.length >= 4) {
-        const fv = [0, 1, 2].map(i => tr.win.reduce((s, v) => s + v[i], 0) / tr.win.length);
-        tr.win = [];
-        tr.takes.push({ fv });
-        $('trainStatus').textContent = 'take ' + tr.takes.length + ' / 5';
-        if (tr.takes.length >= 5) {
-          tr.pad.takes = tr.takes; tr.pad.trained = true;
-          const el = $('pad' + state.pads.indexOf(tr.pad));
-          el.classList.add('trained');
-          el.innerHTML = '<div class="pname">' + tr.pad.name + '</div><div>trained · ' + tr.pad.midi + '</div>';
-          $('trainStatus').textContent = '"' + tr.pad.name + '" trained.';
-          state.training = null;
-          $('trainBtn').disabled = false;
-        }
-      }
-      return true;
-    }
-    return false;
-  }
-  return origCheck(d);
-};
-
-/* ================= key tab ================= */
-$('stick').oninput = e => state.stickiness = +e.target.value / 100;
-$('bendMode').onchange = e => state.bendMode = e.target.value;
-$('bendRange').onchange = e => state.bendRange = +e.target.value;
-$('scaleSel').onchange = e => { state.scale = e.target.value; };
-$('rootSel').onchange = e => { state.root = +e.target.value; };
-$('detectKeyBtn').onclick = () => {
-  if (!state.keyBuf.length) { $('keyResult').textContent = 'sing something first.'; return; }
-  // simple: most common pitch class -> major/minor guess
-  const counts = {};
-  state.keyBuf.forEach(p => counts[p] = (counts[p] || 0) + 1);
-  const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
-  $('keyResult').textContent = 'most sung: ' + NOTE_NAMES[top] + '. Try ' + NOTE_NAMES[top] + ' Major or Minor.';
-};
-
-$('previewScaleBtn').onclick = () => {
-  if (!state.ac) { $('keyResult').textContent = 'start the microphone first (enables audio).'; return; }
-  const iv = SCALES[state.scale] || SCALES.Chromatic;
-  const base = 60 + state.root; // C4 + root
-  iv.forEach((st, i) => {
-    setTimeout(() => synthNoteOn(base + st, 0.7), i * 220);
-    setTimeout(() => synthNoteOff(), i * 220 + 200);
-  });
-};
-
-/* ================= MIDI capture → .mid download ================= */
-let capturing = false, capEvents = [], capStart = 0;
-$('capBtn').onclick = () => {
-  if (!capturing) {
-    capturing = true; capEvents = []; capStart = performance.now();
-    $('capBtn').textContent = '■ Stop & download MIDI';
-    $('status').textContent = 'capturing MIDI… perform, then stop';
-  } else {
-    capturing = false;
-    $('capBtn').textContent = '● Capture MIDI';
-    $('status').textContent = 'MIDI captured: ' + capEvents.length + ' events';
-    downloadMidi();
-  }
-};
-function capEvent(type, midi, vel) {
-  if (!capturing) return;
-  capEvents.push({ t: performance.now() - capStart, type, midi, vel });
-}
-// hook into noteOn/noteOff
-const _noteOn = noteOn, _noteOff = noteOff;
-noteOn = function (midi, vel) { capEvent('on', midi, vel); _noteOn(midi, vel); };
-noteOff = function (midi) { capEvent('off', midi, 0); _noteOff(midi); };
-
-function downloadMidi() {
-  // minimal single-track MIDI file, 480 ticks/beat, 120bpm
-  const TPB = 480;
-  const evs = capEvents.map(e => ({ tick: Math.round(e.t / 500 * TPB), type: e.type, midi: e.midi, vel: e.vel }));
-  evs.sort((a, b) => a.tick - b.tick);
-  const track = [];
-  const varlen = v => {
-    const b = [v & 0x7f]; v >>= 7;
-    while (v) { b.unshift((v & 0x7f) | 0x80); v >>= 7; }
-    for (let i = 0; i < b.length - 1; i++) b[i] |= 0x80;
-    return b;
-  };
-  let last = 0;
-  for (const e of evs) {
-    track.push(...varlen(e.tick - last));
-    last = e.tick;
-    if (e.type === 'on') track.push(0x90, e.midi, Math.round(e.vel * 127));
-    else track.push(0x80, e.midi, 0);
-  }
-  track.push(...varlen(0), 0xff, 0x2f, 0x00);
-  const hdr = [0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, TPB >> 8, TPB & 0xff];
-  const trk = [0x4d, 0x54, 0x72, 0x6b,
-    (track.length >> 24) & 0xff, (track.length >> 16) & 0xff, (track.length >> 8) & 0xff, track.length & 0xff,
-    ...track];
-  const blob = new Blob([new Uint8Array([...hdr, ...trk])], { type: 'audio/midi' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'voxmidi-capture.mid';
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-}
-/* ================= calibration ================= */
-let noiseFloor = 0.015;
-$('calBtn').onclick = () => {
-  if (!state.running) return;
-  $('status').textContent = 'stay quiet… measuring room noise';
-  $('calBtn').disabled = true;
-  let peak = 0, n = 0;
-  const iv = setInterval(() => {
-    peak = Math.max(peak, state.lastRms || 0);
-    if (++n >= 40) {
-      clearInterval(iv);
-      noiseFloor = Math.max(peak * 1.5, 0.005);
-      $('status').textContent = 'calibrated. noise floor set.';
-      $('calBtn').disabled = false;
-    }
-  }, 50);
-};
-const ccMap = { aaa: 74, ooo: 71, eee: 76, env: 11 };
-const ccThresh = { aaa: 0.1, ooo: 0.1, eee: 0.1, env: 0.05 };
-const ccBypass = { aaa: false, ooo: false, eee: false, env: false };
-[['Aaa','aaa'],['Ooo','ooo'],['Eee','eee'],['Env','env']].forEach(([C, k]) => {
-  $('cc' + C + 'In').onchange = e => { ccMap[k] = +e.target.value; $('cc' + C).textContent = ccMap[k]; };
-  $('th' + C).oninput = e => ccThresh[k] = +e.target.value / 100;
-});
-[['mAaa','aaa'],['mOoo','ooo'],['mEee','eee'],['mEnv','env']].forEach(([id, k]) => {
-  $(id).style.cursor = 'pointer';
-  $(id).onclick = () => {
-    ccBypass[k] = !ccBypass[k];
-    $(id).style.opacity = ccBypass[k] ? 0.3 : 1;
-  };
-});
-/* profiles: pads + cc map + scale in localStorage */
-$('saveProf').onclick = () => {
-  const data = { pads: state.pads, ccMap, ccThresh, scale: state.scale, root: state.root };
-  localStorage.setItem('voxmidi-profile', JSON.stringify(data));
-  $('profStatus').textContent = 'saved.';
-};
-$('loadProf').onclick = () => {
-  try {
-    const data = JSON.parse(localStorage.getItem('voxmidi-profile'));
-    if (!data) { $('profStatus').textContent = 'no saved profile.'; return; }
-    Object.assign(ccMap, data.ccMap); Object.assign(ccThresh, data.ccThresh);
-    state.scale = data.scale || 'Chromatic'; state.root = data.root || 0;
-    $('scaleSel').value = state.scale; $('rootSel').value = state.root;
-    (data.pads || []).forEach((sp, i) => {
-      if (state.pads[i] && sp.trained) {
-        state.pads[i] = sp;
-        const el = $('pad' + i);
-        el.classList.add('trained');
-        el.innerHTML = '<div class="pname">' + sp.name + '</div><div>trained · ' + sp.midi + '</div>';
-      }
-    });
-    $('profStatus').textContent = 'loaded.';
-  } catch (e) { $('profStatus').textContent = 'load failed.'; }
-};
-
-window.__vox = { state, snapToScale, hz2midi };
-</script>
+<script type="module" src="js/ui.js"></script>
 </body>
 </html>
