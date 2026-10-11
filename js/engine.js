@@ -38,28 +38,61 @@ export function quantizeNote(midiFloat, keyRoot, scaleName) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Internal synth: mono lead + tiny drum kit, all Web Audio.           */
+/* Internal synth: breathy mono wind voice + tiny drum kit, Web Audio.  */
+/* A whistle is close to a sine wave with air in it — not a detuned    */
+/* sawtooth. So the lead voice is sine fundamental + soft triangle     */
+/* warmth + bandpassed breath noise, with a real ADSR and continuous   */
+/* breath following. It should sound like an instrument, not a test.   */
 /* ------------------------------------------------------------------ */
+
+/** Perceptual velocity -> gain. Quiet notes stay audible, loud stay clean. */
+export function velocityGain(vel) {
+  const v = Math.max(0, Math.min(1, vel / 127));
+  return 0.15 + 0.85 * Math.pow(v, 1.6);
+}
+
+/** Breath level 0..1 -> gain multiplier with a soft knee (smoothstep). */
+export function breathCurve(b) {
+  const x = Math.max(0, Math.min(1, b));
+  return x * x * (3 - 2 * x);
+}
+
 export class InternalSynth {
   constructor(ctx, master) {
     this.ctx = ctx;
     this.master = master;
-    this.voice = null; // {oscA, oscB, filter, gain}
+    this.voice = null; // {oscA, oscB, noiseGain, breathGain, toneFilter, envGain}
     this.localOn = true;
+    this._breath = 0;
   }
 
   _ensureVoice() {
     if (this.voice) return this.voice;
     const ctx = this.ctx;
-    const oscA = ctx.createOscillator(); oscA.type = 'sawtooth';
-    const oscB = ctx.createOscillator(); oscB.type = 'sawtooth'; oscB.detune.value = 8;
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'lowpass'; filter.frequency.value = 2400; filter.Q.value = 2;
-    const gain = ctx.createGain(); gain.gain.value = 0;
-    oscA.connect(filter); oscB.connect(filter);
-    filter.connect(gain); gain.connect(this.master);
-    oscA.start(); oscB.start();
-    this.voice = { oscA, oscB, filter, gain };
+    // Fundamental: sine. Warmth: triangle at -12 dB. No detune beating.
+    const oscA = ctx.createOscillator(); oscA.type = 'sine';
+    const oscB = ctx.createOscillator(); oscB.type = 'triangle';
+    const oscBGain = ctx.createGain(); oscBGain.gain.value = 0.25;
+    // Breath: looped noise through a gentle bandpass = "air", not hiss.
+    const noiseSrc = ctx.createBufferSource();
+    noiseSrc.buffer = this._noiseBuffer(1.0); noiseSrc.loop = true;
+    const noiseBP = ctx.createBiquadFilter();
+    noiseBP.type = 'bandpass'; noiseBP.frequency.value = 3200; noiseBP.Q.value = 0.9;
+    const noiseGain = ctx.createGain(); noiseGain.gain.value = 0;
+    // Tone filter opens with harder playing; low Q so it never honks.
+    const toneFilter = ctx.createBiquadFilter();
+    toneFilter.type = 'lowpass'; toneFilter.frequency.value = 1400; toneFilter.Q.value = 0.7;
+    // breathGain follows the player's blowing; envGain carries the ADSR.
+    const breathGain = ctx.createGain(); breathGain.gain.value = 0;
+    const envGain = ctx.createGain(); envGain.gain.value = 0;
+
+    oscA.connect(toneFilter);
+    oscB.connect(oscBGain); oscBGain.connect(toneFilter);
+    noiseSrc.connect(noiseBP); noiseBP.connect(noiseGain); noiseGain.connect(toneFilter);
+    toneFilter.connect(breathGain); breathGain.connect(envGain);
+    envGain.connect(this.master);
+    oscA.start(); oscB.start(); noiseSrc.start();
+    this.voice = { oscA, oscB, noiseGain, breathGain, toneFilter, envGain };
     return this.voice;
   }
 
@@ -68,31 +101,51 @@ export class InternalSynth {
     const v = this._ensureVoice();
     const t = this.ctx.currentTime;
     const freq = 440 * Math.pow(2, (midi - 69) / 12);
-    const detune = bendCents; // cents
-    v.oscA.frequency.cancelScheduledValues(t);
-    v.oscB.frequency.cancelScheduledValues(t);
-    // Glide to the new pitch over 25 ms: legato feel, no clicks.
-    v.oscA.frequency.setTargetAtTime(freq, t, 0.008);
-    v.oscB.frequency.setTargetAtTime(freq, t, 0.008);
-    v.oscA.detune.setTargetAtTime(detune, t, 0.008);
-    v.oscB.detune.setTargetAtTime(8 + detune, t, 0.008);
-    const level = 0.22 * (velocity / 127);
-    v.gain.gain.cancelScheduledValues(t);
-    v.gain.gain.setTargetAtTime(level, t, 0.012);
-    v.filter.frequency.setTargetAtTime(1200 + velocity * 22, t, 0.02);
+    // Legato glide: short tau, notes connect like a real phrase, no clicks.
+    v.oscA.frequency.setTargetAtTime(freq, t, 0.012);
+    v.oscB.frequency.setTargetAtTime(freq, t, 0.012);
+    v.oscA.detune.setTargetAtTime(bendCents, t, 0.01);
+    v.oscB.detune.setTargetAtTime(bendCents, t, 0.01);
+    // Tone opens with velocity; sustain level is perceptual, not linear.
+    const vg = velocityGain(velocity);
+    v.toneFilter.frequency.setTargetAtTime(700 + vg * 2600, t, 0.03);
+    // Soft attack: ~25 ms to sustain. No more instant-on clicks.
+    const sustain = 0.32 * vg;
+    v.envGain.gain.cancelScheduledValues(t);
+    v.envGain.gain.setTargetAtTime(sustain, t, 0.008);
+    this._applyBreath(t);
+  }
+
+  /** Continuous breath level 0..1, called every analysis frame. */
+  setBreath(level01) {
+    if (!this.localOn) return;
+    const target = Math.max(0, Math.min(1, level01));
+    this._breath += 0.3 * (target - this._breath);
+    if (!this.voice) return;
+    this._applyBreath(this.ctx.currentTime);
+  }
+
+  _applyBreath(t) {
+    const b = breathCurve(this._breath);
+    // Voice never fully chokes; air sits ~18 dB under the tone.
+    this.voice.breathGain.gain.setTargetAtTime(0.15 + 0.85 * b, t, 0.04);
+    this.voice.noiseGain.gain.setTargetAtTime(0.05 * b, t, 0.05);
   }
 
   pitchBend(cents) {
     if (!this.localOn || !this.voice) return;
     const t = this.ctx.currentTime;
     this.voice.oscA.detune.setTargetAtTime(cents, t, 0.01);
-    this.voice.oscB.detune.setTargetAtTime(8 + cents, t, 0.01);
+    this.voice.oscB.detune.setTargetAtTime(cents, t, 0.01);
   }
 
   noteOff() {
     if (!this.voice) return;
     const t = this.ctx.currentTime;
-    this.voice.gain.gain.setTargetAtTime(0, t, 0.03);
+    // Gentle release: ~120 ms to silence. Notes end, they don't get cut.
+    this.voice.envGain.gain.cancelScheduledValues(t);
+    this.voice.envGain.gain.setTargetAtTime(0, t, 0.04);
+    this.voice.noiseGain.gain.setTargetAtTime(0, t, 0.05);
   }
 
   _noiseBuffer(dur) {
@@ -309,6 +362,12 @@ export class AudioEngine {
     const rms = frameRMS(this.frame);
     this.ui.onLevel && this.ui.onLevel(rms);
 
+    // Breath following for the wind voice: smoothed RMS -> 0..1.
+    const bTarget = Math.max(0, Math.min(1, (rms - 0.008) / 0.22));
+    this._breathSm = this._breathSm === undefined ? bTarget
+      : this._breathSm + 0.25 * (bTarget - this._breathSm);
+    this.synth.setBreath(this._breathSm);
+
     // Pitch path.
     const det = rms >= this.tracker.gate * 0.6 ? yinDetect(this.frame, this.sampleRate) : null;
     const q = this.settings.quantize
@@ -373,6 +432,7 @@ export class AudioEngine {
   /* Direct audition: playable keyboard / drum pads. Sound + MIDI, no record. */
   auditionNote(midi, vel = 96) {
     if (!this.ctx) return;
+    this.synth.setBreath(0.7); // no mic while auditioning: fixed breath
     this.synth.noteOn(midi, vel, 0);
     this.midi.noteOn(midi, vel);
   }

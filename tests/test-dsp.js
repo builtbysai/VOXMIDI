@@ -4,6 +4,7 @@
 import {
   yinDetect, freqToMidiFloat, midiToName, frameRMS, NoteTracker,
 } from '../js/pitch.js';
+import { velocityGain, breathCurve } from '../js/engine.js';
 import { fftMagnitudes, spectralCentroid, classifyHit, OnsetDetector } from '../js/drums.js';
 import { eventsToSMF, inspectSMF } from '../js/midifile.js';
 
@@ -163,6 +164,19 @@ console.log('OnsetDetector streaming');
   for (let i = 0; i < 10; i++, t += 16) od.process(quiet, 0.004, t);
   check('onset fires exactly once', hits.length === 1, `hits=${hits.length}`);
   check('onset classified snare-ish', hits[0] && hits[0].kind === 'snare', `kind=${hits[0]?.kind}`);
+}
+
+console.log('Voice curves (wind synth)');
+{
+  check('velocityGain(0) small but audible', velocityGain(0) > 0 && velocityGain(0) < 0.2,
+    `got ${velocityGain(0)}`);
+  check('velocityGain(127) == 1', Math.abs(velocityGain(127) - 1) < 1e-9);
+  check('velocityGain monotonic', velocityGain(30) < velocityGain(90) && velocityGain(90) < velocityGain(127));
+  check('breathCurve(0) == 0', breathCurve(0) === 0);
+  check('breathCurve(1) == 1', breathCurve(1) === 1);
+  check('breathCurve soft knee below linear early', breathCurve(0.25) < 0.25 && breathCurve(0.25) > 0.1,
+    `got ${breathCurve(0.25)}`);
+  check('breathCurve clamps', breathCurve(-2) === 0 && breathCurve(5) === 1);
 }
 
 console.log('MIDI file writer');
