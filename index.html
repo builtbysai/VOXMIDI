@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='%231e3a2f' stroke='%233a7d5d' stroke-width='2'/><text x='16' y='21' font-size='14' text-anchor='middle' fill='%23c8f0d8'>V</text></svg>">
-<title>VoxMIDI — voice to MIDI controller</title>
+<title>VoxMIDI: voice to MIDI controller</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: system-ui, -apple-system, sans-serif; background: #0d0f14; color: #e8eaf0;
@@ -176,7 +176,7 @@
   <div class="card">
     <h3>MIDI output</h3>
     <div class="row">
-      <label>Output <select id="midiOut"><option value="">(no MIDI — internal synth only)</option></select></label>
+      <label>Output <select id="midiOut"><option value="">(no MIDI; internal synth only)</option></select></label>
       <button id="midiBtn">Enable MIDI</button>
     </div>
     <div class="row">
@@ -1404,12 +1404,12 @@ $('midiBtn').onclick = async () => {
     const access = await navigator.requestMIDIAccess();
     const outs = [...access.outputs.values()];
     const sel = $('midiOut');
-    sel.innerHTML = '<option value="">(no MIDI — internal synth only)</option>';
+    sel.innerHTML = '<option value="">(no MIDI; internal synth only)</option>';
     outs.forEach((o, i) => {
       const op = document.createElement('option'); op.value = i; op.textContent = o.name; sel.appendChild(op);
     });
     state.midiAccess = access; state.midiReady = true;
-    $('midiStatus').textContent = outs.length ? outs.length + ' output(s) found.' : 'no MIDI outputs found — add a virtual port.';
+    $('midiStatus').textContent = outs.length ? outs.length + ' output(s) found.' : 'no MIDI outputs found. Add a virtual port to connect one.';
   } catch (e) { $('midiStatus').textContent = 'MIDI access denied.'; }
 };
 $('midiOut').onchange = e => {
@@ -1765,7 +1765,7 @@ $('detectKeyBtn').onclick = () => {
   const counts = {};
   state.keyBuf.forEach(p => counts[p] = (counts[p] || 0) + 1);
   const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
-  $('keyResult').textContent = 'most sung: ' + NOTE_NAMES[top] + ' — try ' + NOTE_NAMES[top] + ' Major or Minor.';
+  $('keyResult').textContent = 'most sung: ' + NOTE_NAMES[top] + '. Try ' + NOTE_NAMES[top] + ' Major or Minor.';
 };
 
 $('previewScaleBtn').onclick = () => {
