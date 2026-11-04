@@ -106,6 +106,8 @@ export const DEFAULT_TEMPLATES = {
 
 /**
  * Classify features against templates (nearest neighbor).
+ * A template is one feature vector or an array of them (trained takes);
+ * a pad's distance is that of its closest take.
  * Returns {kind, centroid, confidence} or null when nothing is close enough.
  * confidence = 1 at zero distance, falling to 0 at maxDistance.
  */
@@ -113,14 +115,16 @@ export function classifyFeatures(feat, templates = DEFAULT_TEMPLATES, maxDistanc
   if (!feat) return null;
   let best = null, bestD = Infinity;
   for (const kind of Object.keys(templates)) {
-    const d = featureDistance(feat, templates[kind]);
-    if (d < bestD) { bestD = d; best = kind; }
+    for (const t of [].concat(templates[kind])) {
+      const d = featureDistance(feat, t);
+      if (d < bestD) { bestD = d; best = kind; }
+    }
   }
   if (bestD > maxDistance) return null;
   return { kind: best, centroid: Math.round(feat.centroid), confidence: Math.max(0, 1 - bestD / maxDistance) };
 }
 
-/** Backwards-compatible single-frame classifier using default templates. */
+/** Extract features from one frame and classify them. */
 export function classifyHit(frame, sampleRate, templates) {
   return classifyFeatures(extractFeatures(frame, sampleRate), templates);
 }
@@ -151,8 +155,12 @@ export class OnsetDetector {
     this.prevLogE = -Infinity; this.lastHitAt = -Infinity;
   }
 
-  /** frame: Float32Array time-domain samples; nowMs: timestamp. */
-  process(frame, rms, nowMs) {
+  /**
+   * Onset gate: log-energy flux against an adaptive median. Call once per
+   * analysis frame; true on a new onset outside the cooldown. Training uses
+   * this directly so it captures the same frames the live classifier sees.
+   */
+  isOnset(rms, nowMs) {
     const logE = Math.log10(rms + 1e-9);
     const flux = Math.max(0, logE - this.prevLogE);
     this.prevLogE = logE;
@@ -164,7 +172,15 @@ export class OnsetDetector {
     const median = sorted[Math.floor(sorted.length / 2)];
     const gate = Math.max(0.12, this.k * median);
 
-    if (flux > gate && rms > this.minRms && nowMs - this.lastHitAt > this.cooldownMs) {
+    return flux > gate && rms > this.minRms && nowMs - this.lastHitAt > this.cooldownMs;
+  }
+
+  /** Start the cooldown without classifying (training captures). */
+  markHit(nowMs) { this.lastHitAt = nowMs; }
+
+  /** frame: Float32Array time-domain samples; nowMs: timestamp. */
+  process(frame, rms, nowMs) {
+    if (this.isOnset(rms, nowMs)) {
       const hit = classifyHit(frame, this.sampleRate, this.templates);
       if (hit && hit.confidence >= this.minConfidence) {
         this.lastHitAt = nowMs;

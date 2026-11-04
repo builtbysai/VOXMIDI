@@ -4,8 +4,12 @@
 import {
   yinDetect, freqToMidiFloat, midiToName, frameRMS, NoteTracker,
 } from '../js/pitch.js';
-import { velocityGain, breathCurve, InternalSynth } from '../js/engine.js';
-import { fftMagnitudes, spectralCentroid, classifyHit, OnsetDetector } from '../js/drums.js';
+import { velocityGain, breathCurve, InternalSynth, AudioEngine } from '../js/engine.js';
+import {
+  fftMagnitudes, spectralCentroid, classifyHit, classifyFeatures, OnsetDetector, DEFAULT_TEMPLATES,
+} from '../js/drums.js';
+import { PitchClassHistogram, detectKey } from '../js/key.js';
+import { emptyBank, sanitizeBank, addTake, removeTake, buildTemplates, MAX_TAKES } from '../js/pads.js';
 import { eventsToSMF, inspectSMF } from '../js/midifile.js';
 
 const SR = 48000;
@@ -298,6 +302,88 @@ console.log('MIDI file writer');
     if (smf2[i] === 0x99 && smf2[i + 1] === 36) { foundCh = true; break; }
   }
   check('drum on channel 9 (0x99) encoded', foundCh);
+}
+
+console.log('Engine octave shift');
+{
+  const sent = [];
+  const stub = { noteOn() {}, noteOff() {}, drum() {}, setBreath() {}, panic() {} };
+  const heard = [];
+  const eng = new AudioEngine({ onNote: (m, v, on) => heard.push((on ? 'on' : 'off') + m) });
+  eng.synth = stub;
+  eng.midi.noteOn = (m) => sent.push('on' + m);
+  eng.midi.noteOff = (m) => sent.push('off' + m);
+  eng.midi.pitchBend = () => {};
+  eng.settings.octave = 1;
+  eng._noteOn(60, 90, 0);
+  check('octave +1 sends note 72', sent[0] === 'on72', sent.join(' '));
+  eng.settings.octave = -1; // changed mid-note
+  eng._noteOff(60);
+  check('release uses the note that was sent', sent[1] === 'off72' && heard.join(' ') === 'on72 off72',
+    sent.join(' ') + ' | ' + heard.join(' '));
+  eng._noteOff(60);
+  check('double release is ignored', sent.length === 2);
+  // Tracker with an unshifted quantizer still follows note changes.
+  const ev = [];
+  const tr = new NoteTracker({ onNoteOn: m => ev.push('on' + m), onNoteOff: m => ev.push('off' + m) }, { gate: 0.01 });
+  const feed = (m, n) => { for (let i = 0; i < n; i++) tr.process({ freq: 440 * Math.pow(2, (m - 69) / 12), clarity: 0.95 }, 0.1, null); };
+  feed(69, 8); feed(72, 8);
+  check('tracker follows a note change', ev.join(' ') === 'on69 off69 on72', ev.join(' '));
+}
+
+console.log('Trained pads');
+{
+  const bank = emptyBank();
+  const take = (c) => ({ centroid: c, lowR: 0.1, midR: 0.2, highR: 0.7 });
+  check('untrained bank uses defaults', buildTemplates(bank).kick.centroid === DEFAULT_TEMPLATES.kick.centroid);
+  for (let i = 0; i < MAX_TAKES + 3; i++) addTake(bank, 'hat', take(8000 + i * 100));
+  check('a pad holds at most 12 takes', bank.hat.length === MAX_TAKES);
+  check('invalid take rejected', addTake(bank, 'kick', { centroid: NaN }) === false && bank.kick.length === 0);
+  removeTake(bank, 'hat', 0);
+  check('take removal', bank.hat.length === MAX_TAKES - 1 && bank.hat[0].centroid === 8100);
+  const t = buildTemplates(bank);
+  check('trained pad exposes all takes, others stay default',
+    Array.isArray(t.hat) && t.hat.length === 11 && !Array.isArray(t.kick));
+  const clean = sanitizeBank({ kick: [take(100), { centroid: 'x' }], snare: 'nope', extra: [take(1)] });
+  check('sanitizeBank drops junk', clean.kick.length === 1 && clean.snare.length === 0 && !('extra' in clean));
+  // A trained take wins over the default when closer.
+  const dark = { centroid: 700, lowR: 0.5, midR: 0.45, highR: 0.05 };
+  const tpl = { ...DEFAULT_TEMPLATES, kick: [dark, { ...DEFAULT_TEMPLATES.kick }] };
+  const c = classifyFeatures(dark, tpl);
+  check('multi-take pad matches its closest take', c && c.kind === 'kick' && c.confidence > 0.99, JSON.stringify(c));
+  check('array and single templates agree',
+    classifyFeatures(DEFAULT_TEMPLATES.snare, DEFAULT_TEMPLATES).kind === 'snare');
+}
+
+console.log('Onset gate');
+{
+  const od = new OnsetDetector(() => {}, { sampleRate: SR, cooldownMs: 100 });
+  let t = 0, fires = 0;
+  for (let i = 0; i < 30; i++, t += 16) od.isOnset(0.004, t);
+  if (od.isOnset(0.25, t)) { fires++; od.markHit(t); }
+  t += 16;
+  if (od.isOnset(0.5, t)) fires++; // still inside cooldown
+  check('isOnset fires once, markHit starts the cooldown', fires === 1, `fires=${fires}`);
+}
+
+console.log('Key detection');
+{
+  const hist = (weights) => { const h = new PitchClassHistogram(); weights.forEach((w, pc) => w && h.add(pc, w)); return h; };
+  // C major scale, tonic and fifth held longer.
+  const cMajor = hist([5, 0, 2, 0, 3, 2, 0, 4, 0, 2, 0, 2]);
+  const r1 = detectKey(cMajor.bins);
+  check('C major melody -> C Major', r1 && r1.key === 0 && r1.scale === 'Major', JSON.stringify(r1));
+  // A natural minor, A heavy, C and E strong.
+  const aMinor = hist([3, 0, 1, 0, 4, 2, 0, 0, 1, 6, 0, 1]);
+  const r2 = detectKey(aMinor.bins);
+  check('A minor melody -> A Natural Minor', r2 && r2.key === 9 && r2.scale === 'Natural Minor', JSON.stringify(r2));
+  // Transposition: D major = C major shifted up two semitones.
+  const cWeights = [5, 0, 2, 0, 3, 2, 0, 4, 0, 2, 0, 2];
+  const dMajor = hist(cWeights.map((_, pc) => cWeights[(pc + 10) % 12]));
+  const r3 = detectKey(dMajor.bins);
+  check('transposed melody -> D Major', r3 && r3.key === 2 && r3.scale === 'Major', JSON.stringify(r3));
+  check('empty or one-note input -> null', detectKey(new PitchClassHistogram().bins) === null
+    && detectKey(hist([0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0]).bins) === null);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

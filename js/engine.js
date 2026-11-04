@@ -1,7 +1,7 @@
 /* VOXMIDI audio engine: mic -> pitch/drums -> MIDI out + internal synth.
  * Browser-only. DSP math lives in pitch.js / drums.js (shared with node tests). */
-import { yinDetect, freqToMidiFloat, frameRMS, NoteTracker } from './pitch.js';
-import { OnsetDetector, extractFeatures, DEFAULT_TEMPLATES } from './drums.js';
+import { yinDetect, frameRMS, NoteTracker } from './pitch.js';
+import { OnsetDetector, DEFAULT_TEMPLATES } from './drums.js';
 import { eventsToSMF } from './midifile.js';
 
 export const SCALES = {
@@ -319,8 +319,8 @@ export class AudioEngine {
     this.midi = new MidiOut();
     this.recorder = new SessionRecorder();
     this.templates = JSON.parse(JSON.stringify(DEFAULT_TEMPLATES));
-    this.pitchHistory = []; // recent midiFloat values for the ribbon
     this.lastFrameAt = 0;
+    this.soundingNote = null; // MIDI note currently held by the voice, after octave shift
   }
 
   get sampleRate() { return this.ctx ? this.ctx.sampleRate : 48000; }
@@ -374,6 +374,8 @@ export class AudioEngine {
     cancelAnimationFrame(this.raf);
     if (this.stream) this.stream.getTracks().forEach(t => t.stop());
     this.stream = null;
+    this._noteOff();
+    this.tracker && this.tracker.reset();
     this.synth && this.synth.panic();
     this.midi.panic();
     this.ui.onState && this.ui.onState('idle');
@@ -397,8 +399,10 @@ export class AudioEngine {
 
     // Pitch path.
     const det = rms >= this.tracker.gate * 0.6 ? yinDetect(this.frame, this.sampleRate) : null;
+    // The tracker works on the raw voice; the octave shift is applied to the
+    // notes it emits. Shifting its input broke its note-change hysteresis.
     const q = this.settings.quantize
-      ? (f) => quantizeNote(f + this.settings.octave * 12, this.settings.key, this.settings.scale)
+      ? (f) => quantizeNote(f, this.settings.key, this.settings.scale)
       : null;
     this.tracker.process(det, rms, q);
 
@@ -409,7 +413,8 @@ export class AudioEngine {
   }
 
   _noteOn(midi, velocity, cents) {
-    const m = Math.max(0, Math.min(127, midi));
+    const m = Math.max(0, Math.min(127, midi + this.settings.octave * 12));
+    this.soundingNote = m;
     const vel = this.settings.velocityOn ? velocity : 96;
     this.synth.noteOn(m, vel, this.settings.bend === 'follow' ? cents : 0);
     this.midi.noteOn(m, vel);
@@ -418,18 +423,20 @@ export class AudioEngine {
     this.ui.onNote && this.ui.onNote(m, vel, true);
   }
 
-  _noteOff(midi) {
+  _noteOff() {
+    // Release the note that was actually sent, even if the octave changed mid-note.
+    const m = this.soundingNote;
+    if (m === null) return;
+    this.soundingNote = null;
     this.synth.noteOff();
-    this.midi.noteOff(midi);
+    this.midi.noteOff(m);
     this.midi.pitchBend(0);
-    this.recorder.noteOff(midi);
-    this.ui.onNote && this.ui.onNote(midi, 0, false);
+    this.recorder.noteOff(m);
+    this.ui.onNote && this.ui.onNote(m, 0, false);
   }
 
   _pitch(midiFloat, cents) {
     const shifted = midiFloat + this.settings.octave * 12;
-    this.pitchHistory.push(shifted);
-    if (this.pitchHistory.length > 320) this.pitchHistory.shift();
     this.ui.onPitch && this.ui.onPitch(shifted, cents);
     if (this.settings.bend === 'follow') {
       const c = Math.max(-200, Math.min(200, cents));
@@ -454,7 +461,12 @@ export class AudioEngine {
     this.templates = t;
     if (this.onset) this.onset.setTemplates(t);
   }
-  panic() { this.synth && this.synth.panic(); this.midi.panic(); }
+  panic() {
+    this.synth && this.synth.panic();
+    this.midi.panic();
+    this.soundingNote = null;
+    this.tracker && this.tracker.reset();
+  }
 
   /* Direct audition: playable keyboard / drum pads. Sound + MIDI, no record. */
   auditionNote(midi, vel = 96) {
@@ -468,11 +480,11 @@ export class AudioEngine {
     this.synth.noteOff();
     this.midi.noteOff(midi);
   }
-  auditionDrum(kind) {
+  auditionDrum(kind, vel = 100) {
     if (!this.ctx) return;
     const map = { kick: 36, snare: 38, hat: 42 };
-    this.synth.drum(kind, 100);
-    this.midi.noteOn(map[kind], 100, 9);
+    this.synth.drum(kind, vel);
+    this.midi.noteOn(map[kind], vel, 9);
     setTimeout(() => this.midi.noteOff(map[kind], 9), 60);
   }
 }

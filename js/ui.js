@@ -1,10 +1,18 @@
-/* VOXMIDI UI: onboarding wizard + studio. Browser-only. */
+/* VOXMIDI UI: setup wizard and the three-tab studio (Play, Train, Setup).
+ * The DSP lives in engine.js, pitch.js and drums.js; this file only wires
+ * the engine to the screen. */
 import { AudioEngine, SCALES, NOTE_NAMES } from './engine.js';
 import { midiToName } from './pitch.js';
-import { extractFeatures, DEFAULT_TEMPLATES } from './drums.js';
+import { PitchWheel } from './wheel.js';
+import { Keyboard } from './keyboard.js';
+import { Trainer } from './train.js';
+import { PitchClassHistogram, detectKey } from './key.js';
+import { KINDS, sanitizeBank, buildTemplates } from './pads.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const hot = {}; // elements touched every analysis frame
+const cached = (s) => (hot[s] ??= $(s));
 
 const store = {
   get(k, d) { try { const v = localStorage.getItem('voxmidi.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
@@ -12,599 +20,585 @@ const store = {
   del(k) { try { localStorage.removeItem('voxmidi.' + k); } catch (e) {} },
 };
 
+const VOICE_HOLD_MS = 160;     // how long the needle lingers after the last voiced frame
+const KEY_MIN_FRAMES = 80;     // about one second of voiced audio before Find key answers
+const KEY_MIN_SCORE = 0.5;
+
 const app = {
   engine: null,
-  step: 0,
-  lockedNote: null,   // first stable note in the hum test
-  lastNote: null,
+  wheel: null,
+  keyboard: null,
+  trainer: null,
+  bank: null,
+  tab: 'play',
+  midiReady: false,
+  pendingMidi: null,       // saved MIDI output id, selected once devices appear
+  // live voice state for the wheel
+  voice: null,             // continuous pitch (midi float) of the last voiced frame
+  voiceAt: 0,
   cents: 0,
-  roll: [],           // {midi, start, end} session notes for the piano roll
-  rollStart: null,
-  training: null,     // {kind, takes:[], need}
+  level: 0,
+  activeNote: null,        // sounding note after Stay in key and octave
+  humNote: null, humCount: 0, humLocked: false,
+  hist: new PitchClassHistogram(),
+  histFrames: 0,
+  recStart: 0,
+  ariaNote: '',
 };
 
-function fmtNote(midi) {
+function noteLabel(midi) {
   const n = midiToName(Math.round(midi));
-  return { letter: n.slice(0, -1), octave: n.slice(-1) };
+  return { name: n, pc: ((Math.round(midi) % 12) + 12) % 12 };
 }
 
-/* ---------------- onboarding ---------------- */
+/* ---------------- settings ---------------- */
 
-const STEPS = ['welcome', 'mic', 'level', 'hum'];
-
-function showStep(i) {
-  app.step = i;
-  $$('.ob-step').forEach(el => el.hidden = true);
-  $('#ob-' + STEPS[i]).hidden = false;
-  $$('.ob-dot').forEach((d, j) => d.classList.toggle('on', j <= i));
-  $('#ob-back').style.visibility = i === 0 ? 'hidden' : 'visible';
-}
-
-function enterStudio() {
-  store.set('onboarded', true);
-  $('#onboarding').hidden = true;
-  $('#studio').hidden = false;
-  document.body.classList.add('in-studio');
-  sizeCanvases();
-  refreshStudioMicUI();
-  app.engine.ui.onState(app.engine.running ? 'live' : 'idle');
-}
-
-async function refreshStudioMicUI() {
-  const btn = $('#btn-mic-studio');
-  const status = $('#mic-studio-status');
-  const sel = $('#mic-select-studio');
-  if (app.engine.running) {
-    btn.textContent = 'Stop microphone';
-    status.textContent = 'Microphone is live.';
-    try {
-      const mics = await app.engine.listMics();
-      if (mics.length > 1) {
-        sel.hidden = false;
-        sel.innerHTML = '';
-        mics.forEach(m => {
-          const o = document.createElement('option');
-          o.value = m.id; o.textContent = m.label;
-          sel.appendChild(o);
-        });
-      }
-    } catch (e) {}
-  } else {
-    btn.textContent = 'Enable microphone';
-    status.textContent = 'Microphone is off.';
-    sel.hidden = true;
-  }
-}
-
-async function enableMic() {
-  const btn = $('#btn-mic');
-  btn.disabled = true;
-  btn.textContent = 'Waiting for the browser…';
-  try {
-    await app.engine.startMic($('#mic-select').value || null);
-    const mics = await app.engine.listMics();
-    const sel = $('#mic-select');
-    sel.innerHTML = '';
-    mics.forEach(m => {
-      const o = document.createElement('option');
-      o.value = m.id; o.textContent = m.label;
-      sel.appendChild(o);
-    });
-    sel.hidden = mics.length < 2 ? true : false;
-    $('#mic-select-label').hidden = mics.length < 2;
-    $('#mic-hint').textContent = mics.length + (mics.length === 1 ? ' microphone found.' : ' microphones found.');
-    btn.textContent = 'Microphone on';
-    $('#btn-to-level').disabled = false;
-    showStep(2);
-  } catch (e) {
-    btn.disabled = false;
-    btn.textContent = 'Enable microphone';
-    $('#mic-error').hidden = false;
-    $('#mic-error').textContent = 'The browser blocked microphone access. Click the camera icon in the address bar, allow the microphone, then try again.';
-  }
-}
-
-/* ---------------- studio rendering ---------------- */
-
-function sizeCanvases() {
-  for (const id of ['ribbon', 'roll']) {
-    const c = $('#' + id);
-    const r = c.getBoundingClientRect();
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    c.width = Math.max(50, r.width * dpr);
-    c.height = Math.max(50, r.height * dpr);
-  }
-}
-
-function drawRibbon() {
-  const c = $('#ribbon');
-  if (!c || !c.width) return;
-  const g = c.getContext('2d');
-  const W = c.width, H = c.height;
-  g.clearRect(0, 0, W, H);
-  // Grid: one line per semitone in view.
-  const hist = app.engine.pitchHistory;
-  const lo = 36, hi = 96; // C2..C7 view
-  const yOf = (m) => H - ((m - lo) / (hi - lo)) * H;
-  g.strokeStyle = 'rgba(255,255,255,0.05)';
-  g.lineWidth = 1;
-  for (let m = lo; m <= hi; m++) {
-    g.beginPath(); g.moveTo(0, yOf(m)); g.lineTo(W, yOf(m)); g.stroke();
-  }
-  if (hist.length < 2) return;
-  // Trace.
-  const n = hist.length;
-  g.beginPath();
-  for (let i = 0; i < n; i++) {
-    const x = (i / (n - 1)) * W;
-    const y = yOf(Math.max(lo, Math.min(hi, hist[i])));
-    i === 0 ? g.moveTo(x, y) : g.lineTo(x, y);
-  }
-  g.strokeStyle = '#35e0c5';
-  g.lineWidth = Math.max(2, W / 400);
-  g.shadowColor = '#35e0c5';
-  g.shadowBlur = 12;
-  g.stroke();
-  g.shadowBlur = 0;
-  // Head dot.
-  const last = hist[n - 1];
-  g.beginPath();
-  g.arc(W - 6, yOf(Math.max(lo, Math.min(hi, last))), 7, 0, 7);
-  g.fillStyle = '#35e0c5';
-  g.fill();
-}
-
-function drawRoll() {
-  const c = $('#roll');
-  if (!c || !c.width) return;
-  const g = c.getContext('2d');
-  const W = c.width, H = c.height;
-  g.clearRect(0, 0, W, H);
-  const now = performance.now() / 1000;
-  const window = 30; // seconds visible
-  const lo = 24, hi = 96;
-  const xOf = (t) => W - ((now - t) / window) * W;
-  const yOf = (m) => H - ((m - lo) / (hi - lo)) * H;
-  const h = Math.max(3, (H / (hi - lo)) * 0.8);
-  for (const n of app.roll) {
-    const x0 = xOf(n.start), x1 = xOf(n.end ?? now);
-    if (x1 < 0 || x0 > W) continue;
-    g.fillStyle = n.live ? '#f5b02e' : 'rgba(139,123,255,0.75)';
-    const y = yOf(n.midi) - h / 2;
-    const w = Math.max(2, x1 - x0);
-    g.beginPath();
-    if (g.roundRect) g.roundRect(Math.max(0, x0), y, Math.min(w, W - Math.max(0, x0)), h, 3);
-    else g.rect(Math.max(0, x0), y, Math.min(w, W - Math.max(0, x0)), h);
-    g.fill();
-  }
-  // Playhead.
-  g.fillStyle = 'rgba(255,255,255,0.25)';
-  g.fillRect(W - 2, 0, 2, H);
-}
-
-function buildKeyboard() {
-  const kb = $('#keyboard');
-  kb.innerHTML = '';
-  // Two octaves: C3 (48) to B4 (71).
-  for (let m = 48; m <= 71; m++) {
-    const pc = m % 12;
-    const black = [1, 3, 6, 8, 10].includes(pc);
-    const k = document.createElement('div');
-    k.className = 'key ' + (black ? 'black' : 'white');
-    k.dataset.midi = m;
-    const lbl = document.createElement('span');
-    lbl.textContent = NOTE_NAMES[pc] + (Math.floor(m / 12) - 1);
-    k.appendChild(lbl);
-    kb.appendChild(k);
-  }
-}
-
-function lightKey(midi, on) {
-  $$('#keyboard .key').forEach(k => {
-    const m = +k.dataset.midi;
-    k.classList.toggle('active', on && m === midi);
+function saveSettings() {
+  const s = app.engine.settings;
+  store.set('settings', {
+    gate: s.gate, key: s.key, scale: s.scale, quantize: s.quantize,
+    bend: s.bend, octave: s.octave, velocityOn: s.velocityOn, localSound: s.localSound,
+    drums: app.trainer && app.trainer.recording ? app.trainer.savedDrums : s.drums,
+    midiOut: app.engine.midi.output ? app.engine.midi.output.id : null,
   });
 }
 
-function updateReadout(midiFloat, cents) {
-  const r = fmtNote(midiFloat);
-  $('#note-letter').textContent = r.letter;
-  $('#note-octave').textContent = r.octave;
-  const c = Math.max(-50, Math.min(50, Math.round(cents)));
-  $('#cents-needle').style.left = (50 + c) + '%';
-  $('#cents-val').textContent = (c >= 0 ? '+' : '') + c + ' ct';
-  $('#note-name-full').textContent = r.letter + r.octave;
-}
-
-/* ---------------- panels ---------------- */
-
-function buildScaleControls() {
-  const keySel = $('#key-select');
-  NOTE_NAMES.forEach((n, i) => {
-    const o = document.createElement('option');
-    o.value = i; o.textContent = n;
-    keySel.appendChild(o);
-  });
-  const scSel = $('#scale-select');
-  Object.keys(SCALES).forEach(s => {
-    const o = document.createElement('option');
-    o.value = s; o.textContent = s;
-    scSel.appendChild(o);
-  });
+function loadSettings() {
+  const saved = store.get('settings', null);
+  if (saved) {
+    const { midiOut, ...rest } = saved;
+    for (const k of Object.keys(app.engine.settings)) if (k in rest) app.engine.settings[k] = rest[k];
+    if (!SCALES[app.engine.settings.scale]) app.engine.settings.scale = 'Major';
+    app.pendingMidi = midiOut || null;
+  }
+  app.bank = sanitizeBank(store.get('pads', null));
+  app.engine.setGate(app.engine.settings.gate);
+  app.engine.setTemplates(buildTemplates(app.bank));
 }
 
 function applySettingsToUI() {
   const s = app.engine.settings;
   $('#key-select').value = s.key;
   $('#scale-select').value = s.scale;
-  $('#tgl-quantize').checked = s.quantize;
-  $('#bend-select').value = s.bend;
   $('#octave-select').value = s.octave;
   $('#gain-range').value = Math.round(s.gate * 1000);
   $('#gain-val').textContent = (s.gate * 100).toFixed(1) + '%';
-  $('#tgl-drums').checked = s.drums;
+  $('#tgl-quantize').checked = s.quantize;
+  $('#bend-select').value = s.bend;
   $('#tgl-velocity').checked = s.velocityOn;
+  $('#tgl-drums').checked = s.drums;
   $('#tgl-local').checked = s.localSound;
-  $('#drum-strip').classList.toggle('off', !s.drums);
+  paintDrumsState();
 }
 
-function saveSettings() {
+function inScalePcs() {
   const s = app.engine.settings;
-  store.set('settings', {
-    gate: s.gate, key: s.key, scale: s.scale, quantize: s.quantize,
-    bend: s.bend, octave: s.octave, drums: s.drums,
-    velocityOn: s.velocityOn, localSound: s.localSound,
-    midiOut: app.engine.midi.output ? app.engine.midi.output.id : null,
-  });
+  return new Set((SCALES[s.scale] || SCALES.Chromatic).map(i => (s.key + i) % 12));
 }
 
-function loadSettings() {
-  const s = store.get('settings', null);
-  if (!s) return;
-  Object.assign(app.engine.settings, s);
-  app.engine.setGate(app.engine.settings.gate);
-  const tpl = store.get('templates', null);
-  if (tpl) app.engine.setTemplates(tpl);
+function paintScale() {
+  app.keyboard.setScale(inScalePcs(), app.engine.settings.key);
 }
 
-/* ---------------- drums ---------------- */
-
-const DRUM_LABEL = { kick: 'Kick', snare: 'Snare', hat: 'Hat' };
-
-function flashPad(kind) {
-  const pad = $('#pad-' + kind);
-  if (!pad) return;
-  pad.classList.remove('hit');
-  void pad.offsetWidth;
-  pad.classList.add('hit');
+function paintDrumsState() {
+  const on = app.engine.settings.drums || (app.trainer && app.trainer.recording);
+  $('#pads').classList.toggle('off', !on);
+  $('#drums-off-note').hidden = !!on;
 }
 
-function openTraining() {
-  $('#train-modal').hidden = false;
-  renderTrainRows();
-  app.training = null;
+function applyBank() {
+  store.set('pads', app.bank);
+  app.engine.setTemplates(buildTemplates(app.bank));
+  paintPadMeta();
 }
 
-function renderTrainRows() {
-  const tpl = app.engine.templates;
-  const custom = store.get('templates', null);
-  $('#train-rows').innerHTML = '';
-  for (const kind of ['kick', 'snare', 'hat']) {
-    const row = document.createElement('div');
-    row.className = 'train-row';
-    const isCustom = custom && custom[kind];
-    row.innerHTML =
-      '<div class="train-name">' + DRUM_LABEL[kind] +
-      (isCustom ? ' <span class="badge">trained</span>' : '') + '</div>' +
-      '<div class="train-status" id="train-status-' + kind + '">Default sound model</div>' +
-      '<button class="btn small" data-train="' + kind + '">Train</button>';
-    $('#train-rows').appendChild(row);
-  }
-  $$('#train-rows [data-train]').forEach(b =>
-    b.addEventListener('click', () => startTraining(b.dataset.train)));
-}
-
-function startTraining(kind) {
-  app.training = { kind, takes: [], need: 3 };
-  $('#train-status-' + kind).textContent = 'Make your ' + kind + ' sound 3 times… (0/3)';
-  $('#train-hint').textContent = 'Listening for sharp hits. Beatbox into the mic.';
-}
-
-function feedTraining(rms) {
-  const t = app.training;
-  if (!t) return;
-  // Reuse the engine analyser frame for feature extraction.
-  const frame = app.engine.frame;
-  if (!frame || rms < 0.06) return;
-  const now = performance.now();
-  if (t.last && now - t.last < 250) return;
-  // Simple peak gate: take the frame, extract features, average 3 takes.
-  const feat = extractFeatures(frame, app.engine.sampleRate);
-  if (!feat) return;
-  t.last = now;
-  t.takes.push(feat);
-  const n = t.takes.length;
-  $('#train-status-' + t.kind).textContent =
-    'Make your ' + t.kind + ' sound 3 times… (' + n + '/3)';
-  flashPad(t.kind);
-  if (n >= t.need) {
-    const avg = { centroid: 0, lowR: 0, midR: 0, highR: 0 };
-    t.takes.forEach(f => { avg.centroid += f.centroid; avg.lowR += f.lowR; avg.midR += f.midR; avg.highR += f.highR; });
-    avg.centroid = Math.round(avg.centroid / n);
-    avg.lowR /= n; avg.midR /= n; avg.highR /= n;
-    const tpl = Object.assign({}, app.engine.templates);
-    tpl[t.kind] = avg;
-    app.engine.setTemplates(tpl);
-    store.set('templates', tpl);
-    $('#train-status-' + t.kind).textContent = 'Trained. Centroid ' + avg.centroid + ' Hz.';
-    app.training = null;
-    renderTrainRows();
+function paintPadMeta() {
+  for (const kind of KINDS) {
+    const n = app.bank[kind].length;
+    $(`[data-meta="${kind}"]`).textContent = n ? `${n} ${n === 1 ? 'take' : 'takes'}` : 'Default';
   }
 }
 
-/* ---------------- MIDI devices ---------------- */
+/* ---------------- status ---------------- */
 
-async function refreshMidiUI() {
+function refreshStatus() {
+  const e = app.engine;
+  const mic = $('#st-mic');
+  mic.textContent = e.running ? 'Mic live' : 'Mic off';
+  mic.className = e.running ? 'on' : 'off';
+  const s = e.settings;
+  $('#st-out').textContent = e.midi.output ? 'MIDI: ' + (e.midi.output.name || 'device')
+    : s.localSound ? 'Built-in synth' : 'No output';
+  $('#btn-mic-play').hidden = e.running;
+}
+
+function fillSelect(sel, items, current) {
+  sel.innerHTML = '';
+  for (const it of items) {
+    const o = document.createElement('option');
+    o.value = it.id; o.textContent = it.label;
+    sel.appendChild(o);
+  }
+  if (current && items.some(i => i.id === current)) sel.value = current;
+}
+
+async function refreshMicUI() {
+  const e = app.engine;
+  $('#btn-mic-studio').textContent = e.running ? 'Stop microphone' : 'Enable microphone';
+  $('#mic-studio-status').textContent = e.running ? 'Microphone is live.' : 'Microphone is off.';
+  $('#train-mic-note').hidden = e.running;
+  if (!e.running) $('#mic-studio-field').hidden = true;
+  refreshStatus();
+  if (app.trainer) app.trainer.render();
+  if (e.running) {
+    try {
+      const mics = await e.listMics();
+      const track = e.stream && e.stream.getAudioTracks()[0];
+      const cur = track && track.getSettings().deviceId;
+      fillSelect($('#mic-select-studio'), mics, cur);
+      $('#mic-studio-field').hidden = mics.length < 2;
+    } catch (err) { /* device list is optional */ }
+  }
+}
+
+async function startMicFrom(select) {
+  await app.engine.startMic(select.value || null);
+}
+
+async function toggleStudioMic() {
+  const btn = $('#btn-mic-studio');
+  if (app.engine.running) {
+    if (app.trainer) app.trainer.disarm(true);
+    app.engine.stop();
+  } else {
+    btn.disabled = true;
+    try {
+      await startMicFrom($('#mic-select-studio'));
+    } catch (err) {
+      $('#mic-studio-status').textContent = 'The browser blocked the microphone. Allow it in the address bar and try again.';
+    }
+    btn.disabled = false;
+  }
+  refreshMicUI();
+}
+
+/* ---------------- setup wizard ---------------- */
+
+const STEPS = ['mic', 'level', 'hum'];
+
+function showStep(i) {
+  $$('.ob-step').forEach(el => { el.hidden = true; });
+  $('#ob-' + STEPS[i]).hidden = false;
+  $$('.ob-steps li').forEach((li, j) => li.classList.toggle('on', j <= i));
+}
+
+async function enableMicWizard() {
+  const btn = $('#btn-mic');
+  btn.disabled = true;
+  btn.textContent = 'Waiting for the browser';
+  try {
+    await startMicFrom($('#mic-select'));
+    const mics = await app.engine.listMics();
+    const track = app.engine.stream.getAudioTracks()[0];
+    fillSelect($('#mic-select'), mics, track && track.getSettings().deviceId);
+    $('#mic-select').hidden = $('#mic-select-label').hidden = mics.length < 2;
+    showStep(1);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = 'Enable microphone';
+    const msg = $('#mic-error');
+    msg.hidden = false;
+    msg.textContent = 'The browser blocked the microphone. Click the icon in the address bar, allow it, then try again.';
+  }
+}
+
+/** Hum test: lock when the same note holds for about a third of a second. */
+function humFrame(midiFloat) {
+  if (app.humLocked) return;
+  const { name } = noteLabel(midiFloat);
+  const n = Math.round(midiFloat);
+  app.humCount = n === app.humNote ? app.humCount + 1 : 1;
+  app.humNote = n;
+  $('#hum-note').textContent = name;
+  if (app.humCount >= 24) {
+    app.humLocked = true;
+    $('#hum-status').textContent = 'Locked on ' + name + '.';
+    $('#hum-status').classList.add('good');
+    $('#btn-start').disabled = false;
+  }
+}
+
+function enterStudio() {
+  store.set('onboarded', true);
+  $('#onboarding').hidden = true;
+  $('#studio').hidden = false;
+  app.wheel.resize();
+  app.trainer.resizeMap();
+  refreshMicUI();
+  app.engine.ui.onState(app.engine.running ? 'live' : 'idle');
+}
+
+/* ---------------- tabs ---------------- */
+
+const TABS = ['play', 'train', 'setup'];
+
+function selectTab(name, focus = false) {
+  if (app.tab === 'train' && name !== 'train') app.trainer.disarm(true);
+  app.tab = name;
+  for (const t of TABS) {
+    const btn = $('#tabbtn-' + t), on = t === name;
+    btn.setAttribute('aria-selected', String(on));
+    btn.tabIndex = on ? 0 : -1;
+    $('#tab-' + t).hidden = !on;
+    if (on && focus) btn.focus();
+  }
+  if (name === 'play') app.wheel.resize();
+  if (name === 'train') app.trainer.resizeMap();
+  if (name === 'setup') enableMidi();
+  paintDrumsState();
+}
+
+/* ---------------- MIDI ---------------- */
+
+/** Web MIDI is requested the first time Setup opens (or at once if a device was saved),
+ *  so browsers that prompt for MIDI do not do it before the user asks. */
+async function enableMidi() {
+  if (app.midiReady) return;
+  app.midiReady = true;
   const midi = app.engine.midi;
   const ok = await midi.enable();
-  const wrap = $('#midi-select-wrap');
-  if (!ok || !midi.supported) {
-    $('#midi-status').textContent = 'MIDI output needs Chrome, Edge, or Firefox. Your built-in synth is ready either way.';
-    wrap.hidden = true;
+  if (!ok) {
+    $('#midi-select-wrap').hidden = true;
+    $('#midi-status').textContent = midi.supported
+      ? 'MIDI access was denied. The built-in synth still plays.'
+      : 'This browser has no MIDI output. The built-in synth and MIDI download still work.';
+    refreshStatus();
     return;
   }
-  const paint = (list) => {
+  midi.onDevices = (list) => {
     const sel = $('#midi-select');
-    const cur = sel.value;
-    sel.innerHTML = '<option value="">Built-in synth only</option>';
-    list.forEach(d => {
-      const o = document.createElement('option');
-      o.value = d.id;
-      o.textContent = d.name;
-      sel.appendChild(o);
-    });
-    if (list.some(d => d.id === cur)) sel.value = cur;
+    const cur = sel.value || app.pendingMidi || '';
+    fillSelect(sel, [{ id: '', label: 'None (built-in synth)' }, ...list.map(d => ({ id: d.id, label: d.name }))], cur);
+    if (app.pendingMidi && list.some(d => d.id === app.pendingMidi)) {
+      midi.select(app.pendingMidi);
+      app.pendingMidi = null;
+    } else if (!list.some(d => d.id === midi.output?.id)) {
+      sel.value = '';
+    }
     $('#midi-status').textContent = list.length
-      ? list.length + (list.length === 1 ? ' MIDI output found.' : ' MIDI outputs found.')
-      : 'No MIDI outputs found. Plug in a device or a virtual MIDI port.';
+      ? `${list.length} MIDI ${list.length === 1 ? 'output' : 'outputs'} found.`
+      : 'No MIDI outputs found. Connect a device or a virtual MIDI port.';
+    refreshStatus();
   };
-  midi.onDevices = paint;
-  // Trigger an initial paint.
   midi._emit();
 }
 
-/* ---------------- record ---------------- */
+/* ---------------- pads ---------------- */
 
-function setRecording(on) {
-  const btn = $('#btn-record');
-  btn.classList.toggle('rec', on);
-  btn.querySelector('.rec-label').textContent = on ? 'Stop' : 'Record';
-  $('#btn-midi-dl').disabled = !(!on && app.engine.recorder.count > 0);
-  $('#rec-count').textContent = on ? 'Recording…' : app.engine.recorder.count + ' notes';
+function flashPad(kind, vel) {
+  const pad = $(`.pad[data-kind="${kind}"]`);
+  pad.style.setProperty('--v', (Math.max(20, vel) / 127).toFixed(2));
+  pad.classList.remove('hit');
+  void pad.offsetWidth; // restart the animation
+  pad.classList.add('hit');
+}
+
+function wirePads() {
+  $$('.pad').forEach(pad => {
+    const kind = pad.dataset.kind;
+    pad.addEventListener('pointerdown', async (e) => {
+      e.preventDefault();
+      const r = pad.getBoundingClientRect();
+      const vel = Math.round(50 + 77 * Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)));
+      await app.engine.init();
+      app.engine.auditionDrum(kind, vel);
+      flashPad(kind, vel);
+    });
+    pad.addEventListener('keydown', async (e) => {
+      if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) {
+        e.preventDefault();
+        await app.engine.init();
+        app.engine.auditionDrum(kind, 100);
+        flashPad(kind, 100);
+      }
+    });
+  });
+}
+
+/* ---------------- key finder ---------------- */
+
+function findKey() {
+  const msg = $('#findkey-msg');
+  if (app.histFrames < KEY_MIN_FRAMES) {
+    msg.textContent = app.engine.running ? 'Not enough yet. Sing a longer phrase.' : 'Turn the microphone on first.';
+    return;
+  }
+  const r = detectKey(app.hist.bins);
+  if (!r) { msg.textContent = 'Heard fewer than three different notes. Sing a phrase with some movement.'; return; }
+  if (r.score < KEY_MIN_SCORE) { msg.textContent = 'No clear key in that phrase. Try again.'; return; }
+  const s = app.engine.settings;
+  s.key = r.key; s.scale = r.scale;
+  applySettingsToUI();
+  paintScale();
+  saveSettings();
+  msg.textContent = `${NOTE_NAMES[r.key]} ${r.scale === 'Major' ? 'major' : 'minor'}. Key and scale set.`;
+  app.hist.reset();
+  app.histFrames = 0;
+}
+
+/* ---------------- recording ---------------- */
+
+function fmtTime(sec) {
+  return Math.floor(sec / 60) + ':' + String(Math.floor(sec % 60)).padStart(2, '0');
+}
+
+function paintSession() {
+  const rec = app.engine.recorder;
+  const n = rec.count;
+  const on = rec.recording;
+  $('#btn-record').classList.toggle('on', on);
+  $('#btn-record').setAttribute('aria-pressed', String(on));
+  $('.sessionbar').classList.toggle('recording', on);
+  $('#rec-count').textContent = on ? `Recording, ${n} ${n === 1 ? 'note' : 'notes'}`
+    : n ? `${n} ${n === 1 ? 'note' : 'notes'} recorded` : 'No recording';
+  $('#btn-midi-dl').disabled = on || n === 0;
+  $('#btn-clear').disabled = on || n === 0;
+  if (!on) $('#rec-label').textContent = 'Rec';
+}
+
+function toggleRecord() {
+  const rec = app.engine.recorder;
+  if (rec.recording) {
+    // Close a held voice note so the file has no hanging note-on.
+    if (app.engine.soundingNote !== null) rec.noteOff(app.engine.soundingNote);
+    rec.stop();
+  } else {
+    rec.start();
+    app.recStart = performance.now();
+  }
+  paintSession();
+}
+
+function downloadMidi() {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(app.engine.recorder.toBlob());
+  a.download = 'voxmidi-session.mid';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+/* ---------------- engine callbacks ---------------- */
+
+function makeEngine() {
+  return new AudioEngine({
+    onLevel: (rms) => {
+      app.level = rms;
+      const pct = Math.min(100, Math.round((rms / 0.3) * 100));
+      const clip = pct > 85;
+      if (!cached('#onboarding').hidden) {
+        const wiz = cached('#ob-meter-fill');
+        wiz.style.width = pct + '%';
+        wiz.classList.toggle('hot', clip);
+        const ok = rms > app.engine.settings.gate;
+        cached('#level-state').textContent = ok ? 'Good level.' : 'No signal yet.';
+        cached('#level-state').classList.toggle('good', ok);
+      } else {
+        const fill = cached('#in-fill');
+        fill.style.width = pct + '%';
+        fill.classList.toggle('hot', clip);
+      }
+      app.trainer && app.trainer.feed(rms);
+    },
+    onPitch: (midiFloat, cents) => {
+      const now = performance.now();
+      app.voice = midiFloat; app.voiceAt = now; app.cents = cents;
+      app.wheel.pushPitch(midiFloat, now);
+      app.hist.add(midiFloat); app.histFrames++;
+      if (!$('#onboarding').hidden && !$('#ob-hum').hidden) humFrame(midiFloat);
+    },
+    onNote: (midi, vel, on) => {
+      app.activeNote = on ? midi : null;
+      app.keyboard.setVoiceNote(on ? midi : null);
+      if (app.engine.recorder.recording) paintSession();
+    },
+    onDrum: (kind, vel) => {
+      flashPad(kind, vel);
+      app.trainer.flash(kind);
+      if (app.engine.recorder.recording) paintSession();
+    },
+    onState: (s) => {
+      if (s === 'idle') {
+        app.voice = null; app.activeNote = null; app.level = 0;
+        app.keyboard && app.keyboard.setVoiceNote(null);
+        const fill = $('#in-fill'); if (fill) fill.style.width = '0';
+      }
+      refreshStatus();
+    },
+  });
+}
+
+/* ---------------- render loop ---------------- */
+
+function wheelState(now) {
+  const e = app.engine;
+  const voiced = app.voice !== null && now - app.voiceAt < VOICE_HOLD_MS;
+  const active = app.activeNote;
+  let label, sub = '';
+  if (active !== null) { label = noteLabel(active).name; sub = (app.cents >= 0 ? '+' : '') + Math.round(app.cents) + ' ct'; }
+  else if (voiced) { label = noteLabel(app.voice).name; sub = (app.cents >= 0 ? '+' : '') + Math.round(app.cents) + ' ct'; }
+  else if (!e.running) { label = 'Mic off'; }
+  else { label = 'Listening'; }
+  if (label !== app.ariaNote) {
+    app.ariaNote = label;
+    $('#wheel').setAttribute('aria-label', 'Pitch wheel: ' + label);
+  }
+  return {
+    inScale: inScalePcs(), root: e.settings.key,
+    activePc: active !== null ? active % 12 : null,
+    voice: voiced ? app.voice : null,
+    cents: app.cents, label, sub,
+    level: Math.min(1, app.level / 0.25), now,
+  };
+}
+
+function frame() {
+  const now = performance.now();
+  if (!$('#studio').hidden) {
+    if (app.tab === 'play') app.wheel.draw(wheelState(now));
+    const rec = app.engine.recorder;
+    if (rec.recording) $('#rec-label').textContent = fmtTime((now - app.recStart) / 1000);
+  }
+  requestAnimationFrame(frame);
 }
 
 /* ---------------- boot ---------------- */
 
-function renderLoop() {
-  drawRibbon();
-  drawRoll();
-  requestAnimationFrame(renderLoop);
+function populate() {
+  fillSelect($('#key-select'), NOTE_NAMES.map((n, i) => ({ id: String(i), label: n })));
+  fillSelect($('#scale-select'), Object.keys(SCALES).map(s => ({ id: s, label: s })));
 }
 
-export function boot() {
-  const params = new URLSearchParams(location.search);
-  if (params.get('fresh') === '1') {
-    ['onboarded', 'settings', 'templates'].forEach(k => store.del(k));
-  }
-
-  app.engine = new AudioEngine({
-    onLevel: (rms) => {
-      const pct = Math.min(100, Math.round((rms / 0.3) * 100));
-      const setBar = (id) => {
-        const el = document.getElementById(id);
-        if (!el) return;
-        el.style.width = pct + '%';
-        el.classList.toggle('hot', pct > 85);
-      };
-      setBar('meter-fill');
-      setBar('ob-meter-fill');
-      const ls = $('#level-state');
-      if (ls) {
-        const ok = rms > app.engine.settings.gate;
-        ls.textContent = ok ? 'Good level. I hear you.' : 'Make some noise…';
-        ls.classList.toggle('good', ok);
-      }
-      feedTraining(rms);
-    },
-    onPitch: (midiFloat, cents) => {
-      app.cents = cents;
-      updateReadout(midiFloat, cents);
-      if (!$('#studio').hidden) return;
-      // Hum test readout (onboarding step 4).
-      const r = fmtNote(midiFloat);
-      $('#hum-note').textContent = r.letter + r.octave;
-      if (app.lockedNote === null && Math.abs(cents) < 40) {
-        app.stable = (app.stable || 0) + 1;
-        if (app.stable > 20) {
-          app.lockedNote = Math.round(midiFloat);
-          $('#hum-status').textContent = 'Locked on. Nice.';
-          $('#hum-status').classList.add('good');
-          const b = $('#btn-start');
-          b.disabled = false;
-          b.textContent = 'Start playing';
-        }
-      } else if (Math.abs(cents) >= 40) {
-        app.stable = 0;
-      }
-    },
-    onNote: (midi, vel, on) => {
-      const now = performance.now() / 1000;
-      if (on) {
-        app.roll.push({ midi, start: now, end: null, live: true });
-        app.lastNote = midi;
-        lightKey(midi, true);
-        const r = fmtNote(midi);
-        $('#now-playing').textContent = 'Now: ' + r.letter + r.octave;
-      } else {
-        const n = [...app.roll].reverse().find(n => n.midi === midi && n.end === null);
-        if (n) { n.end = now; n.live = false; }
-        if (app.lastNote === midi) { app.lastNote = null; lightKey(midi, false); }
-        $('#now-playing').textContent = 'Now: …';
-      }
-      if (app.roll.length > 400) app.roll.splice(0, app.roll.length - 400);
-      if (app.engine.recorder.recording) {
-        $('#rec-count').textContent = 'Recording… ' + app.engine.recorder.count + ' notes';
-      }
-    },
-    onDrum: (kind, vel) => flashPad(kind),
-    onState: (s) => { $('#status-dot').className = 'dot ' + s; },
-  });
-
-  loadSettings();
-  buildKeyboard();
-  buildScaleControls();
-  applySettingsToUI();
-
-  /* onboarding wiring */
-  $('#btn-begin').addEventListener('click', () => showStep(1));
-  $('#ob-back').addEventListener('click', () => showStep(Math.max(0, app.step - 1)));
-  $$('[data-skip]').forEach(b => b.addEventListener('click', enterStudio));
-  $('#btn-mic').addEventListener('click', enableMic);
-  $('#btn-to-level').addEventListener('click', () => showStep(2));
-  $('#mic-select').addEventListener('change', (e) => {
+function wire() {
+  /* wizard */
+  $('#btn-mic').addEventListener('click', enableMicWizard);
+  $('#mic-select').addEventListener('change', () => {
     app.engine.stop();
-    app.engine.startMic(e.target.value).catch(() => {});
+    startMicFrom($('#mic-select')).catch(() => {});
   });
-  $('#btn-to-hum').addEventListener('click', () => showStep(3));
+  $('#btn-to-hum').addEventListener('click', () => showStep(2));
   $('#btn-start').addEventListener('click', enterStudio);
+  $$('[data-skip]').forEach(b => b.addEventListener('click', enterStudio));
 
-  $('#btn-mic-studio').addEventListener('click', async () => {
-    const btn = $('#btn-mic-studio');
-    if (app.engine.running) {
-      app.engine.stop();
-    } else {
-      btn.disabled = true;
-      btn.textContent = 'Waiting for the browser…';
-      try {
-        await app.engine.startMic($('#mic-select-studio').value || null);
-      } catch (e) {
-        $('#mic-studio-status').textContent = 'The browser blocked microphone access. Allow it in the address bar and try again.';
-      }
-      btn.disabled = false;
-    }
-    refreshStudioMicUI();
-  });
-  $('#mic-select-studio').addEventListener('change', (e) => {
-    app.engine.stop();
-    app.engine.startMic(e.target.value).then(refreshStudioMicUI).catch(() => {});
+  /* tabs */
+  TABS.forEach(t => $('#tabbtn-' + t).addEventListener('click', () => selectTab(t)));
+  $('.tabstrip').addEventListener('keydown', (e) => {
+    const i = TABS.indexOf(app.tab);
+    const next = { ArrowRight: TABS[(i + 1) % TABS.length], ArrowLeft: TABS[(i + TABS.length - 1) % TABS.length],
+      Home: TABS[0], End: TABS[TABS.length - 1] }[e.key];
+    if (next) { e.preventDefault(); selectTab(next, true); }
   });
 
-  /* studio wiring */
+  /* transport */
+  $('#btn-record').addEventListener('click', toggleRecord);
+  $('#btn-midi-dl').addEventListener('click', downloadMidi);
+  $('#btn-clear').addEventListener('click', () => { app.engine.recorder.reset(); paintSession(); });
+  $('#btn-panic').addEventListener('click', () => {
+    app.engine.panic();
+    app.keyboard.releaseAll();
+    app.activeNote = null;
+  });
+
+  /* play controls */
+  const keyScale = () => { paintScale(); saveSettings(); };
+  $('#key-select').addEventListener('change', (e) => { app.engine.settings.key = +e.target.value; keyScale(); });
+  $('#scale-select').addEventListener('change', (e) => { app.engine.settings.scale = e.target.value; keyScale(); });
+  $('#octave-select').addEventListener('change', (e) => { app.engine.settings.octave = +e.target.value; saveSettings(); });
   $('#gain-range').addEventListener('input', (e) => {
-    const g = (+e.target.value) / 1000;
+    const g = +e.target.value / 1000;
     app.engine.setGate(g);
     $('#gain-val').textContent = (g * 100).toFixed(1) + '%';
     saveSettings();
   });
-  $('#key-select').addEventListener('change', (e) => { app.engine.settings.key = +e.target.value; saveSettings(); });
-  $('#scale-select').addEventListener('change', (e) => { app.engine.settings.scale = e.target.value; saveSettings(); });
+  $('#btn-findkey').addEventListener('click', findKey);
+  $('#btn-mic-play').addEventListener('click', toggleStudioMic);
+  $('#btn-drums-on').addEventListener('click', () => {
+    app.engine.settings.drums = true;
+    $('#tgl-drums').checked = true;
+    paintDrumsState(); saveSettings();
+  });
+
+  /* setup */
+  $('#btn-mic-studio').addEventListener('click', toggleStudioMic);
+  $('#btn-train-mic').addEventListener('click', toggleStudioMic);
+  $('#mic-select-studio').addEventListener('change', () => {
+    app.engine.stop();
+    startMicFrom($('#mic-select-studio')).then(refreshMicUI).catch(refreshMicUI);
+  });
   $('#tgl-quantize').addEventListener('change', (e) => { app.engine.settings.quantize = e.target.checked; saveSettings(); });
   $('#bend-select').addEventListener('change', (e) => { app.engine.settings.bend = e.target.value; saveSettings(); });
-  $('#octave-select').addEventListener('change', (e) => { app.engine.settings.octave = +e.target.value; saveSettings(); });
-  $('#tgl-drums').addEventListener('change', (e) => {
-    app.engine.settings.drums = e.target.checked;
-    $('#drum-strip').classList.toggle('off', !e.target.checked);
-    saveSettings();
-  });
   $('#tgl-velocity').addEventListener('change', (e) => { app.engine.settings.velocityOn = e.target.checked; saveSettings(); });
-  $('#tgl-local').addEventListener('change', (e) => {
-    app.engine.settings.localSound = e.target.checked;
-    if (app.engine.synth) app.engine.synth.localOn = e.target.checked;
-    saveSettings();
-  });
+  $('#tgl-drums').addEventListener('change', (e) => { app.engine.settings.drums = e.target.checked; paintDrumsState(); saveSettings(); });
+  $('#tgl-local').addEventListener('change', (e) => setLocalSound(e.target.checked));
   $('#midi-select').addEventListener('change', (e) => {
     const dev = app.engine.midi.select(e.target.value);
-    if (dev) {
-      // A real MIDI device takes over: mute the local synth to avoid doubling.
-      app.engine.settings.localSound = false;
-      app.engine.synth.localOn = false;
-      $('#tgl-local').checked = false;
-    }
-    saveSettings();
+    // A hardware or DAW target replaces the built-in synth; choosing none brings it back.
+    setLocalSound(!dev);
+    app.engine.midi.panic();
   });
-  $('#btn-panic').addEventListener('click', () => {
-    app.engine.panic();
-    app.roll.forEach(n => { if (n.end === null) n.end = performance.now() / 1000; n.live = false; });
-    lightKey(-1, false);
-    $('#now-playing').textContent = 'Now: …';
+  $('#btn-reset-all').addEventListener('click', () => {
+    if (!confirm('Reset all settings and trained pads on this device?')) return;
+    ['onboarded', 'settings', 'pads'].forEach(k => store.del(k));
+    location.reload();
   });
 
-  /* record + download */
-  $('#btn-record').addEventListener('click', () => {
-    const rec = app.engine.recorder;
-    if (rec.recording) { rec.stop(); setRecording(false); }
-    else { app.roll = []; rec.start(); setRecording(true); }
-  });
-  $('#btn-midi-dl').addEventListener('click', () => {
-    const blob = app.engine.recorder.toBlob();
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'voxmidi-session.mid';
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-  });
-  $('#btn-clear-roll').addEventListener('click', () => { app.roll = []; });
+  /* train */
+  $('#train-reset').addEventListener('click', () => app.trainer.clearAll());
 
-  /* drums */
-  $('#btn-train').addEventListener('click', openTraining);
-  $('#train-close').addEventListener('click', () => { $('#train-modal').hidden = true; app.training = null; });
-  $('#train-reset').addEventListener('click', () => {
-    store.del('templates');
-    app.engine.setTemplates(JSON.parse(JSON.stringify(DEFAULT_TEMPLATES)));
-    renderTrainRows();
+  /* canvases follow their boxes */
+  const ro = new ResizeObserver(() => { app.wheel.resize(); app.trainer.resizeMap(); });
+  ro.observe($('.wheel-wrap'));
+  ro.observe($('#map'));
+}
+
+function setLocalSound(on) {
+  app.engine.settings.localSound = on;
+  if (app.engine.synth) app.engine.synth.localOn = on;
+  $('#tgl-local').checked = on;
+  refreshStatus();
+  saveSettings();
+}
+
+export function boot() {
+  app.engine = makeEngine();
+  loadSettings();
+  populate();
+
+  app.wheel = new PitchWheel($('#wheel'));
+  app.keyboard = new Keyboard($('#keyboard'), {
+    down: async (midi, vel) => { await app.engine.init(); app.engine.auditionNote(midi, vel); },
+    up: (midi) => app.engine.auditionNoteOff(midi),
   });
-  // Drum pads are playable: tap to audition the sound.
-  $$('#drum-strip .pad').forEach(p => {
-    const kind = p.id.replace('pad-', '');
-    p.addEventListener('pointerdown', async () => {
-      await app.engine.init();
-      app.engine.auditionDrum(kind);
-      flashPad(kind);
-    });
-  });
-  // Keyboard is playable too.
-  $$('#keyboard .key').forEach(k => {
-    const midi = +k.dataset.midi;
-    k.addEventListener('pointerdown', async (e) => {
-      e.preventDefault();
-      await app.engine.init();
-      app.engine.auditionNote(midi);
-      lightKey(midi, true);
-    });
-    const off = () => { app.engine.auditionNoteOff(midi); if (app.lastNote !== midi) lightKey(midi, false); };
-    k.addEventListener('pointerup', off);
-    k.addEventListener('pointerleave', off);
+  app.trainer = new Trainer({
+    engine: app.engine, bank: app.bank,
+    rowsEl: $('#train-rows'), mapEl: $('#map'), hintEl: $('#train-hint'),
+    onChange: applyBank,
+    onArm: () => paintDrumsState(),
   });
 
-  /* help */
-  $('#btn-help').addEventListener('click', () => { $('#help-modal').hidden = false; });
-  $('#help-close').addEventListener('click', () => { $('#help-modal').hidden = true; });
-  $$('.modal').forEach(m => m.addEventListener('click', (e) => {
-    if (e.target === m) m.hidden = true;
-  }));
+  applySettingsToUI();
+  paintScale();
+  paintPadMeta();
+  paintSession();
+  wirePads();
+  wire();
 
-  window.addEventListener('resize', sizeCanvases);
-
-  // Skip onboarding if done before, or via ?screen=studio (screenshots/demo).
-  if (params.get('screen') === 'studio' || store.get('onboarded', false)) {
+  if (store.get('onboarded', false)) {
     enterStudio();
+    if (app.pendingMidi) enableMidi();
   } else {
     showStep(0);
   }
-
-  refreshMidiUI();
-  renderLoop();
-  window.voxmidi = app; // for scripted testing
+  frame();
 }
 
 document.addEventListener('DOMContentLoaded', boot);

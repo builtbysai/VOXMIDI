@@ -1,0 +1,10 @@
+{
+  "name": "voxmidi",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tests/test-dsp.js",
+    "eval": "node tests/eval-pitch.js",
+    "serve": "python3 -m http.server 8080"
+  }
+}
