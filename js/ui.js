@@ -570,6 +570,7 @@ function setLocalSound(on) {
 
 export function boot() {
   app.engine = makeEngine();
+  installTestHook();
   loadSettings();
   populate();
 
@@ -602,3 +603,29 @@ export function boot() {
 }
 
 document.addEventListener('DOMContentLoaded', boot);
+
+/* ---------------- test hook (?test=1 only, inert otherwise) ----------------
+ * Exposes window.__voxmidi for automated testing with fake mic input.
+ * Active only when the URL has ?test=1. Adds no elements, changes no
+ * behavior for normal users. See ~/workspace/voxmidi-test-plan/PLAN.md. */
+function installTestHook() {
+  if (!new URLSearchParams(location.search).has('test')) return;
+  const eng = app.engine;
+  const log = [];
+  const t0 = performance.now();
+  const stamp = () => Math.round(performance.now() - t0);
+  for (const k of ['onLevel', 'onPitch', 'onNote', 'onDrum', 'onState']) {
+    const orig = eng.ui[k];
+    eng.ui[k] = (...a) => {
+      log.push({ t: stamp(), k, a });
+      if (orig) orig(...a);
+    };
+  }
+  window.__voxmidi = {
+    events: log,
+    start: () => eng.startMic(),
+    stop: () => eng.stop(),
+    setQuantize: (v) => { eng.settings.quantize = v; },
+    state: () => ({ running: eng.running, gate: eng.settings.gate, sampleRate: eng.ctx ? eng.ctx.sampleRate : null }),
+  };
+}
